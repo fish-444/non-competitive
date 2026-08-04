@@ -22,6 +22,14 @@ rem 모델 방식을 쓸 거면 위 두 줄을 지우고 아래를 쓰세요
 rem set ROBOFLOW_MODEL_TOP=모델이름/1
 rem set ROBOFLOW_MODEL_STAGE=모델이름/1
 
+rem 카메라 높이(cm). 트레이 바닥에서 렌즈까지 재서 넣으세요.
+rem 안 넣으면 이 보정을 안 합니다. 넣으면 한 장 탑뷰에서 '가운데 포기가 크게,
+rem 구석 포기가 작게' 측정되는 것을 자리별로 되돌립니다.
+rem set CAM_HEIGHT_CM=50
+
+rem 잎이 트레이 바닥에서 떠 있는 평균 높이(cm). 기본 18.
+rem set LEAF_HEIGHT_CM=18
+
 rem 탐지 민감도 (낮출수록 잎을 더 많이 잡음, 기본 25)
 rem set CONFIDENCE=15
 

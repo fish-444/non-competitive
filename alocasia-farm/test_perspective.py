@@ -193,6 +193,67 @@ def test_bad_corner_json_rejected():
         raise AssertionError("깨진 JSON 을 거부해야 한다")
 
 
+# ── 카메라 거리 보정 ──────────────────────────────────────────────────────
+# 한 장 탑뷰는 사진 전체에 배율 하나를 곱한다. 카메라가 유한한 높이에 있으면
+# 중앙 포기가 카메라에 가까워 크게 찍히고, 같은 배율을 곱하니 cm 도 부푼다.
+
+
+def _gain(x, z, cam=50.0, leaf=18.0):
+    """CAM_HEIGHT_CM 을 잠깐 바꿔 보정 배수를 잰다."""
+    old_c, old_l = main.CAM_HEIGHT_CM, main.LEAF_HEIGHT_CM
+    try:
+        main.CAM_HEIGHT_CM, main.LEAF_HEIGHT_CM = cam, leaf
+        return main._distance_gain(x, z)
+    finally:
+        main.CAM_HEIGHT_CM, main.LEAF_HEIGHT_CM = old_c, old_l
+
+
+def test_the_correction_is_off_until_the_camera_height_is_given():
+    """높이를 모르면 보정할 근거가 없다 — 아무것도 안 바꾼다."""
+    assert _gain(0, 0, cam=0) == 1.0
+    assert _gain(30, 20, cam=0) == 1.0
+
+
+def test_a_camera_lower_than_the_leaves_is_ignored():
+    """잎보다 낮은 카메라 높이는 잘못 적은 값이다 — 음수 높이로 계산하면 안 된다."""
+    assert _gain(30, 20, cam=10, leaf=18) == 1.0
+
+
+def test_corners_are_scaled_up_and_the_centre_down():
+    """구석은 멀어서 작게 찍힌다 — 키워 주고, 중앙은 줄인다."""
+    assert _gain(0, 0) < 1.0
+    assert _gain(30, 20) > 1.0
+    assert _gain(30, 20) > _gain(30, 0) > _gain(0, 0)
+
+
+def test_the_shelf_average_stays_put():
+    """보정을 켠다고 온 선반의 등급이 한쪽으로 쏠리면 안 된다."""
+    pts = [((i / 12 - 0.5) * main._W, (j / 12 - 0.5) * main._D)
+           for i in range(13) for j in range(13)]
+    mean = sum(_gain(x, z) for x, z in pts) / len(pts)
+    assert abs(mean - 1.0) < 1e-9, mean
+
+
+def test_a_higher_camera_needs_less_correction():
+    """멀리서 찍을수록 원근 차이가 줄어든다 — 천장에 달면 보정이 거의 필요 없다."""
+    near = _gain(30, 20, cam=50)
+    far = _gain(30, 20, cam=200)
+    assert 1.0 < far < near, (far, near)
+
+
+def test_the_same_plant_measures_the_same_wherever_it_sits():
+    """같은 포기를 중앙에 뒀을 때와 구석에 뒀을 때 결과가 같아야 한다.
+
+    카메라에서 먼 만큼 작게 찍히는 것을 그대로 되돌리므로, 둘을 곱하면 1이 된다.
+    """
+    cam, leaf = 50.0, 18.0
+    h = cam - leaf
+    for x, z in [(0, 0), (30, 0), (30, 20), (-15, 10)]:
+        shrink = h / main.math.hypot(main.math.hypot(x, z), h)   # 사진에 찍힌 축소
+        assert abs(shrink * _gain(x, z, cam, leaf)
+                   * main._mean_distance_gain(h) - 1.0) < 1e-9, (x, z)
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for t in tests:

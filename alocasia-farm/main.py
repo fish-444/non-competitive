@@ -30,6 +30,7 @@
 """
 
 import base64
+import functools
 import io
 import math
 import os
@@ -291,6 +292,42 @@ def _stage(cls: str) -> str:
     if "old" in c or "senes" in c:
         return "old"          # 노엽(노화잎)
     return "mature"           # 성엽(성숙잎) — 'leaf','matureleaf','mature'
+
+
+# --------------------------------------------------------------------------- 거리 보정
+# 한 장 탑뷰는 사진 전체에 배율 하나(60cm ÷ 사진 폭)를 곱한다. 그런데 카메라는
+# 유한한 높이에 있어서 **중앙 포기가 구석 포기보다 카메라에 가깝다**. 가까우면
+# 픽셀을 더 많이 차지하는데 같은 배율을 곱하니 cm 도 크게 나온다. 그래서 가운데가
+# 부풀고 구석이 쪼그라든다 — 뒤쪽의 더 큰 포기가 작게 잡히던 원인이 이것이다.
+#
+# 카메라에서 포기까지 거리는 √(r² + h²) (r = 사진 중앙에서 잰 거리). 사진에 찍히는
+# 크기는 이 거리에 반비례하므로, 거리에 비례해서 되돌리면 된다.
+#
+# 잎은 트레이 바닥이 아니라 그 위에 떠 있어 카메라에 더 가깝다. 유효 높이 h 는
+# 카메라 높이에서 잎 높이를 뺀 값이다.
+CAM_HEIGHT_CM = float(os.environ.get("CAM_HEIGHT_CM", "0"))     # 0 이면 보정 안 함
+LEAF_HEIGHT_CM = float(os.environ.get("LEAF_HEIGHT_CM", "18"))
+
+
+@functools.lru_cache(maxsize=8)
+def _mean_distance_gain(h: float) -> float:
+    """선반에 고르게 놓였다고 볼 때의 평균 배수 — 전체가 커지거나 작아지지 않게 나눌 값."""
+    pts = [((i / 12 - 0.5) * _W, (j / 12 - 0.5) * _D)
+           for i in range(13) for j in range(13)]
+    return sum(math.hypot(math.hypot(x, z), h) / h for x, z in pts) / len(pts)
+
+
+def _distance_gain(x_cm: float, z_cm: float) -> float:
+    """선반 위 (x, z) 에 있는 포기의 크기 보정 배수. 중앙 < 1 < 구석.
+
+    선반 전체 평균이 1이 되도록 맞췄다. 보정을 켠다고 모든 포기의 등급이 한쪽으로
+    쏠리면 안 되기 때문이다 — 고치려는 건 '자리에 따라 달라지는 것'이지 전체 크기가
+    아니다. CAM_HEIGHT_CM 을 안 정하면 1.0 을 돌려줘 아무것도 안 바뀐다.
+    """
+    h = CAM_HEIGHT_CM - LEAF_HEIGHT_CM
+    if CAM_HEIGHT_CM <= 0 or h <= 0:
+        return 1.0
+    return math.hypot(math.hypot(x_cm, z_cm), h) / (h * _mean_distance_gain(h))
 
 
 # --------------------------------------------------------------------------- 원근 보정
@@ -1351,6 +1388,7 @@ async def scan_farm(file: UploadFile = File(...), replace: str = Form(None),
         slot_of=(lambda g: slots.get(id(g))) if slots else None,
         mode=scan_mode,
         cm_per_unit=(_W / space_w) if space_w else None,
+        distance_correct=True,          # 한 장 탑뷰 — 카메라가 선반 가운데 위
         verdicts=verdicts, scan_id=scan_id,
         leaf_extra_of=lambda b: {"bbox_px": [round(b["x1"] * box_to_px, 1),
                                              round(b["y1"] * box_to_px, 1),
@@ -1475,8 +1513,14 @@ def _register_groups(groups: List[List[dict]], space_w: float, space_h: float,
                      feat_of, per_plant_area: float, img_area: float,
                      slot_of=None, mode: str = "update",
                      cm_per_unit: float = None, verdicts: dict = None,
-                     scan_id: str = None, leaf_extra_of=None) -> List[dict]:
+                     scan_id: str = None, leaf_extra_of=None,
+                     distance_correct: bool = False) -> List[dict]:
     """무리 목록 → 자리 배정 후 등록/갱신. 스캔 엔드포인트들이 함께 쓴다.
+
+    distance_correct 는 **한 장 탑뷰에서만** 켠다. 카메라가 선반 한가운데 위에
+    있다고 보고 사진 중앙에서 멀수록 크기를 키워 주는 보정이다(_distance_gain).
+    여러 장 스캔은 사진마다 카메라 위치가 달라 '사진 중앙 = 카메라 바로 아래'가
+    성립하지 않으므로 켜지 않는다.
 
     space_w/space_h 는 **박스가 놓인 좌표계의 크기**다. 한 장 스캔이면 사진 박스
     공간, 여러 장 스캔이면 선반 캔버스라 값의 단위가 다르다. 여기서는 정규화
@@ -1527,9 +1571,14 @@ def _register_groups(groups: List[List[dict]], space_w: float, space_h: float,
         # 지정한 화분이면 그 화분의 실제 자리를, 아니면 잎 무리의 무게중심을 쓴다.
         px_cm, pz_cm = _pot_xz_cm(slot["label"]) or (x_cm, z_cm)
 
+        # 카메라에서 먼 자리일수록 작게 찍힌다 — 자리에 맞춰 배율을 되돌린다.
+        scale = cm_per_unit
+        if scale and distance_correct:
+            scale *= _distance_gain(x_cm, z_cm)
+
         metrics = {}
         metrics.update(analyze_top(g, img_area, ref_area=per_plant_area))
-        metrics.update(analyze_metrics(g, img_area, cm_per_unit))
+        metrics.update(analyze_metrics(g, img_area, scale))
         feat = feat_of(g)
 
         if existing:
@@ -1552,7 +1601,7 @@ def _register_groups(groups: List[List[dict]], space_w: float, space_h: float,
             existing["updated"] = now
             FEATS[existing["id"]] = feat
             if verdicts:
-                _record_leaves(existing, g, verdicts, scan_id, cm_per_unit, leaf_extra_of)
+                _record_leaves(existing, g, verdicts, scan_id, scale, leaf_extra_of)
             result.append(existing)
         else:
             pid = uuid.uuid4().hex[:8]
@@ -1563,7 +1612,7 @@ def _register_groups(groups: List[List[dict]], space_w: float, space_h: float,
             FEATS[pid] = feat
             by_slot[slot["label"]] = plant
             if verdicts:
-                _record_leaves(plant, g, verdicts, scan_id, cm_per_unit, leaf_extra_of)
+                _record_leaves(plant, g, verdicts, scan_id, scale, leaf_extra_of)
             result.append(plant)
     _ensure_pot_slots(result)
     _recompute_shape_groups()
