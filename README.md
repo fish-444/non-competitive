@@ -1,6 +1,4 @@
-# non-competitive
-
-경진대회와 무관한 개인 프로젝트 모음.
+# non-competitive / alocasia-farm
 
 ## [alocasia-farm](alocasia-farm/) — 알로카시아 온실 스마트팜
 
