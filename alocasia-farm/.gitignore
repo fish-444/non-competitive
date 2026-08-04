@@ -1,0 +1,20 @@
+*.pt
+__pycache__/
+*.pyc
+.env
+farm.db
+*.db
+farm_env.bat
+farm_env.sh
+
+# 예제 파일에 키를 적어 커밋하는 사고가 있었다. 실수로라도 키가 든 채
+# 올라가지 않게, 이름이 farm_env 로 시작하는 파일은 예제만 남기고 모두 무시한다.
+farm_env*.bat
+farm_env*.sh
+!farm_env.example.bat
+!farm_env.example.sh
+farm_env*.bak
+
+# capture_boxes.py 가 만드는 정확도 측정 자료.
+# 사진마다 크기가 크고 사람마다 다른 사진을 쓰므로 각자 로컬에만 둔다.
+bench_data/

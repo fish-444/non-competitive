@@ -1,0 +1,12 @@
+fastapi
+uvicorn[standard]
+python-multipart
+pillow
+requests
+
+# 로컬 .pt 모델을 쓸 때만 필요합니다.
+# ultralytics 는 torch 까지 함께 받아서 2GB 가 넘고, 설치가 실패하면 위의
+# 필수 패키지까지 안 깔린 채로 끝나 서버가 안 뜹니다.
+# 로보플로우(API·워크플로)나 데모로 쓰신다면 설치할 필요가 없어요.
+# 로컬 .pt 를 쓰실 때만 따로:
+#     python -m pip install ultralytics

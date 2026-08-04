@@ -1,0 +1,1341 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>알로카시아 스마트팜 3D 온실 🌿</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%;overflow:hidden;background:#0e1512;color:#e8f0ea;
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Malgun Gothic","Apple SD Gothic Neo",sans-serif}
+  #app{position:fixed;inset:0}canvas{display:block}
+  .panel{position:fixed;background:rgba(18,26,22,.92);border:1px solid rgba(120,180,140,.25);
+    border-radius:12px;padding:14px 16px;backdrop-filter:blur(6px);z-index:10;font-size:13px;line-height:1.5}
+
+  /* 왼쪽: 추가 폼 + 리스트 */
+  /* 패널이 화면보다 길어지면 스크롤 — 버튼이 늘어나며 목록이 화면 밖으로 밀려났었다 */
+  #side{top:14px;left:14px;width:270px;max-height:calc(100vh - 28px);
+    display:flex;flex-direction:column;gap:12px;overflow-y:auto;overscroll-behavior:contain}
+  #side::-webkit-scrollbar{width:7px}
+  #side::-webkit-scrollbar-thumb{background:rgba(120,180,140,.3);border-radius:4px}
+  #side > *{flex:none}
+  #side h1{font-size:16px;color:#7ddb9a}
+  #side .eng{font-size:11px;color:#9fb4a6;margin-top:2px}
+  .form label{display:block;font-size:12px;color:#cfe0d4;margin:9px 0 4px}
+  .form input[type=text],.form input[type=file]{width:100%;font-size:13px;padding:9px;background:#14201a;
+    color:#e8f0ea;border:1px solid rgba(120,180,140,.3);border-radius:8px}
+  .btn{width:100%;padding:11px;border:none;border-radius:9px;background:#2e7d32;color:#fff;
+    font-size:14px;font-weight:700;cursor:pointer;margin-top:11px}
+  .btn:hover:not(:disabled){background:#256428}.btn:disabled{background:#4b6b4e;cursor:not-allowed}
+  #status{margin-top:8px;font-size:12px;color:#9fb4a6;min-height:1.2em;text-align:center}
+
+  #listWrap{min-height:0}
+  #listWrap h2{font-size:12px;letter-spacing:.05em;color:#9fb4a6;text-transform:uppercase;margin-bottom:8px}
+  .item{display:flex;align-items:center;gap:9px;padding:9px 10px;border:1px solid rgba(120,180,140,.18);
+    border-radius:9px;margin-bottom:7px;cursor:pointer;background:#14201a}
+  .item:hover{border-color:#7ddb9a;background:#182a20}
+  .item .nm{flex:1;font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .item .sz{font-size:11px;font-weight:700;padding:2px 8px;border-radius:20px;background:#24382c;color:#7ddb9a}
+  .item .x{color:#c98;font-size:16px;padding:0 3px;line-height:1}
+  .item .x:hover{color:#f0a3a3}
+  .empty{font-size:12px;color:#6f8073;text-align:center;padding:10px}
+  #mapWrap h2{font-size:12px;letter-spacing:.05em;color:#9fb4a6;text-transform:uppercase;margin-bottom:8px}
+  #map{display:grid;grid-template-columns:repeat(10,1fr);gap:3px}
+  .cell{background:#14201a;border:1px solid rgba(120,180,140,.2);border-radius:5px;padding:4px 1px;text-align:center;cursor:pointer;overflow:hidden}
+  .cell:hover{border-color:#7ddb9a}
+  .cell.on{background:#1d3324;border-color:#4fa85a}
+  .cell .lb{color:#7ddb9a;font-weight:700;font-size:9px;line-height:1.15}
+  .cell .nm{color:#7f8f83;font-size:7.5px;line-height:1.15;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .cell.on .nm{color:#d7e8dc}
+  .poschip{font-size:12px;font-weight:700;color:#0e1512;background:#7ddb9a;border-radius:6px;padding:2px 8px;margin-right:8px;flex:none}
+
+  #hint{bottom:14px;right:14px;font-size:11.5px;color:#9fb4a6}
+
+  /* 모달 */
+  #mWrap{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:50;display:none;
+    justify-content:center;overflow-y:auto;padding:16px}
+  #modal{width:390px;max-width:92vw;margin:auto;align-self:flex-start;background:#16211b;
+    border:1px solid rgba(120,180,140,.3);border-radius:16px;padding:20px}
+  #modal .hd{display:flex;justify-content:space-between;align-items:center;gap:10px}
+  #modal .hd input{flex:1;font-size:17px;font-weight:700;color:#7ddb9a;background:transparent;border:none;border-bottom:1px dashed transparent;padding:2px 0}
+  #modal .hd input:focus{outline:none;border-bottom-color:#4fa85a}
+  #modal .close{cursor:pointer;color:#9fb4a6;font-size:22px;line-height:1}
+  #modal .thumb{width:100%;height:150px;object-fit:cover;border-radius:10px;margin:12px 0;background:#0e1512}
+  .chips{margin-bottom:12px;display:flex;gap:7px;flex-wrap:wrap}
+  .chip{display:inline-block;padding:3px 10px;border-radius:20px;font-size:12px;font-weight:700;color:#fff}
+  .grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:14px}
+  .stat{background:#1d2b23;border-radius:9px;padding:10px}
+  .stat .k{font-size:11px;color:#9fb4a6}.stat .v{font-size:18px;font-weight:750;color:#e8f0ea;margin-top:2px}
+  /* 잎 개수 −/+ */
+  .cnt{display:flex;align-items:center;justify-content:space-between;gap:4px;margin-top:2px}
+  .cnt .v{margin:0;font-variant-numeric:tabular-nums;min-width:20px;text-align:center}
+  .cnt button{width:22px;height:22px;flex:none;border-radius:6px;cursor:pointer;
+    border:1px solid rgba(120,180,140,.3);background:#24382c;color:#d7e8dc;
+    font-size:14px;font-weight:700;line-height:1;padding:0}
+  .cnt button:hover{background:#2d4636;border-color:#7ddb9a}
+  .cnt button:active{background:#356b45}
+  /* 크기 등급 선택 */
+  .szrow{display:flex;gap:6px}
+  .szrow button{flex:1;padding:7px 0;border-radius:8px;cursor:pointer;font-size:12.5px;
+    font-weight:600;border:1px solid rgba(120,180,140,.3);background:#1d2b23;color:#9fb4a6}
+  .szrow button:hover{border-color:#7ddb9a;color:#d7e8dc}
+  .szrow button[aria-pressed="true"]{background:#2e7d32;border-color:#2e7d32;color:#fff}
+  .mrow{display:flex;gap:8px}
+  .mbtn{flex:1;padding:10px;border-radius:9px;border:1px solid rgba(120,180,140,.3);background:#24382c;color:#d7e8dc;font-size:13px;font-weight:600;cursor:pointer;text-align:center}
+  .mbtn:hover{background:#2d4636}.mbtn.danger{background:#3a2020;border-color:#6b3030;color:#f0b3b3}
+  .mbtn input{display:none}
+  #mUpd{font-size:11px;color:#6f8073;text-align:right;margin-top:9px}
+</style>
+</head>
+<body>
+<div id="app"></div>
+
+<div id="side" class="panel">
+  <div>
+    <h1>🌿 알로카시아 스마트팜</h1>
+    <div class="eng">분석 엔진: <b id="eng">…</b> · 3D 온실</div>
+    <div id="demoWarn" style="display:none;margin-top:8px;padding:9px 11px;border-radius:8px;
+         background:#4a2318;border:1px solid #c4643a;color:#ffd9c7;font-size:11.5px;line-height:1.5">
+      <b>⚠️ 데모 모드입니다 — 지금 보이는 결과는 사진과 무관한 가짜입니다.</b><br>
+      로보플로우 키가 안 읽혀서 난수로 박스를 찍고 있습니다.
+      잎 개수·크기·자리 전부 의미가 없습니다.<br>
+      <span style="opacity:.85">서버 창의 <code>[설정]</code> 줄을 보시고
+      <code>farm_env.bat</code> 의 키를 채운 뒤 서버를 껐다 켜세요.</span>
+    </div>
+  </div>
+  <div class="form">
+    <label>① 식물 이름</label>
+    <input type="text" id="name" placeholder="예: 프라이덱, 흑룡, 거북알로카시아" maxlength="24" />
+    <label>② 식물 사진</label>
+    <input type="file" id="file" accept="image/*" />
+    <label>③ 자리 선택</label>
+    <select id="pos"></select>
+    <button class="btn" id="addBtn" disabled>🌱 온실에 추가</button>
+    <div id="status"></div>
+  </div>
+  <div class="form" style="border-top:1px solid rgba(120,180,140,.18);padding-top:10px">
+    <div style="font-size:12px;color:#cfe0d4;margin-bottom:6px">🏡 <b>농장 전체 사진</b>으로 한 번에</div>
+    <label class="mbtn" style="display:block;padding:10px;border-radius:9px;border:1px solid rgba(120,180,140,.3);background:#24382c;color:#d7e8dc;font-size:13px;font-weight:600;cursor:pointer;text-align:center">
+      📸 탑뷰 사진 스캔<input type="file" id="scanFile" accept="image/*" style="display:none">
+    </label>
+    <label style="display:flex;align-items:center;gap:6px;font-size:11px;color:#9fb4a6;margin-top:7px;cursor:pointer">
+      <input type="checkbox" id="scanWithPots"> 🪴 화분도 같이 지정 (처음이거나 화분을 옮겼을 때)
+    </label>
+    <label style="display:block;font-size:11px;color:#9fb4a6;margin:9px 0 4px">스캔할 때 기존 기록은</label>
+    <select id="scanMode" style="width:100%;font-size:12.5px;padding:8px;background:#14201a;
+      color:#e8f0ea;border:1px solid rgba(120,180,140,.3);border-radius:8px">
+      <option value="keep" selected>잎 유지 · 새 잎만 기록 (권장)</option>
+      <option value="update">탐지값으로 덮어쓰기</option>
+      <option value="replace">전부 지우고 새로 채우기</option>
+    </select>
+    <div id="scanModeHelp" style="font-size:10.5px;color:#6f8073;margin-top:4px;line-height:1.5"></div>
+    <div id="scanStatus" style="margin-top:6px;font-size:12px;color:#9fb4a6;min-height:1.2em"></div>
+    <label class="mbtn" style="display:block;margin-top:7px;padding:10px;border-radius:9px;border:1px solid rgba(120,180,140,.3);background:#1d3324;color:#d7e8dc;font-size:13px;font-weight:600;cursor:pointer;text-align:center">
+      📐 여러 장 + 원근 보정<input type="file" id="multiFile" accept="image/*" multiple style="display:none">
+    </label>
+    <div style="font-size:10.5px;color:#6f8073;margin-top:5px">2~4장 · 사진마다 선반 네 모서리를 찍어 왜곡을 폅니다</div>
+    <label class="mbtn" style="display:block;margin-top:9px;padding:10px;border-radius:9px;border:1px solid rgba(180,150,90,.35);background:#2b2718;color:#e8ddc0;font-size:13px;font-weight:600;cursor:pointer;text-align:center">
+      🪴 화분 자리 지정<input type="file" id="potFile" accept="image/*" style="display:none">
+    </label>
+    <div id="potInfo" style="font-size:10.5px;color:#6f8073;margin-top:5px">
+      화분 위치를 한 번 찍어 두면 pot 라벨링 없이 개체가 갈립니다
+    </div>
+    <div id="potMap" style="display:none;position:relative;width:238px;height:159px;margin-top:6px;
+      background:#0e1512;border:1px solid rgba(120,180,140,.22);border-radius:7px"></div>
+    <!-- 화분 두 개 사이에 걸친 잎만 골라 보여 준다. 끌어서(또는 눌러서) 위 지도의 화분에 놓으면 소속이 바뀐다 -->
+    <div id="leafFixWrap" style="display:none;margin-top:8px">
+      <div style="font-size:11px;color:#e8c96a;margin-bottom:4px">
+        ⚠️ 애매한 잎 <b id="leafAmb">0</b>장 — 잎을 고르고 위 지도의 화분을 누르세요
+      </div>
+      <div id="leafFix" style="max-height:132px;overflow-y:auto"></div>
+      <div id="leafFixInfo" style="font-size:10.5px;color:#6f8073;margin-top:4px"></div>
+    </div>
+    <label class="mbtn" id="refBtnWrap" style="display:none;margin-top:7px;padding:10px;border-radius:9px;border:1px solid rgba(180,150,90,.35);background:#2b2718;color:#e8ddc0;font-size:13px;font-weight:600;cursor:pointer;text-align:center">
+      🎯 화분 기준으로 스캔<input type="file" id="refFile" accept="image/*" multiple style="display:none">
+    </label>
+    <div id="refHint" style="display:none;font-size:10.5px;color:#6f8073;margin-top:5px">
+      모서리가 안 보일 때 · 아는 화분 4개 이상만 찍으면 됩니다
+    </div>
+  </div>
+  <!-- 화분 하나씩 모달을 열지 않고, 트레이 전체에 준 물주기를 한 번에 기록한다 -->
+  <div class="form" style="border-top:1px solid rgba(120,180,140,.18);padding-top:10px">
+    <div style="font-size:12px;color:#cfe0d4;margin-bottom:6px">💧 <b>물주기</b></div>
+    <div class="mrow">
+      <button type="button" class="mbtn" id="waterAllBtn">전체 화분에 물 줬어요</button>
+      <button type="button" class="mbtn" id="waterCalBtn" style="flex:none;padding:10px 14px">📅</button>
+    </div>
+    <div id="waterAllInfo" style="font-size:10.5px;color:#6f8073;margin-top:5px"></div>
+  </div>
+  <!-- 조명 위치를 계산해 '어느 화분에 어느 식물을 둘까'를 제안한다 -->
+  <div class="form" style="border-top:1px solid rgba(120,180,140,.18);padding-top:10px">
+    <div style="font-size:12px;color:#cfe0d4;margin-bottom:6px">💡 <b>조명 위치</b> — 좌·우 레일 3개</div>
+    <div style="font-size:10.5px;color:#6f8073;margin-bottom:6px">
+      레일에 고정돼 좌우로는 못 옮기고, 3D 화면에서 끌면 레일을 따라(앞뒤로)만 움직여요 (빔 각도 기본 30°)
+    </div>
+    <div id="lightList"></div>
+    <button type="button" class="mbtn" id="lightReset" style="margin-top:6px">↺ 기본값(처음 표시한 자리)</button>
+    <div style="display:flex;align-items:baseline;gap:8px;margin-top:12px">
+      <div style="font-size:12px;color:#cfe0d4">☀️ <b>배치 점수</b></div>
+      <b id="plScore" style="font-size:20px;color:#7ddb9a;margin-left:auto">–</b>
+      <span style="font-size:11px;color:#6f8073">/100</span>
+    </div>
+    <div id="plWorst" style="font-size:10.5px;color:#6f8073;margin-top:5px;line-height:1.6"></div>
+    <div class="mrow" style="margin-top:8px">
+      <button type="button" class="mbtn" id="plOpt">🔀 최적 배치 계산</button>
+      <button type="button" class="mbtn" id="plHeat">🌈 히트맵</button>
+    </div>
+    <div id="plPlan" style="display:none;margin-top:8px"></div>
+  </div>
+  <div id="mapWrap">
+    <h2>🗺️ 온실 자리 지도</h2>
+    <div id="map"></div>
+    <div style="font-size:10.5px;color:#6f8073;margin-top:6px">자리 탭 → 그 식물 상세 · 빈자리 탭 → 추가 준비</div>
+  </div>
+  <div id="listWrap">
+    <h2>등록된 식물 <span id="cnt">(0)</span></h2>
+    <div id="list"></div>
+  </div>
+</div>
+
+<div id="hint" class="panel">드래그=회전 · 휠=확대 · 화분/리스트 클릭=상세</div>
+
+<div id="mWrap">
+  <div id="modal">
+    <div class="hd">
+      <span class="poschip" id="mPos"></span>
+      <input id="mName" type="text" maxlength="24" />
+      <span class="close" id="mClose">×</span>
+    </div>
+    <img class="thumb" id="mThumb" alt="분석 사진" />
+    <div style="background:#1a2620;border-left:3px solid #8fe36a;border-radius:8px;padding:9px 12px;margin-bottom:12px;font-size:13px">
+      ☀️ <b style="color:#8fe36a">광합성 잎 (모델1 · 3D 반영)</b> — 맨 위 잎 <b id="mTopSize">–</b> <span id="mTopPct" style="color:#9fb4a6"></span>
+    </div>
+    <div style="font-size:11px;color:#9fb4a6;margin-bottom:6px">개체 특징 (모델2 · 잎 단계)</div>
+    <div class="chips"><span class="chip" id="mSize"></span><span class="chip" id="mShape" style="display:none"></span><span class="chip" id="mManual" style="display:none;background:#7a5c22">✋ 직접 수정함</span></div>
+
+    <div style="font-size:11px;color:#9fb4a6;margin-bottom:5px">
+      크기 등급 — <b style="color:#cfe0d4">가장 큰 잎 길이</b>로 자동 판정 · 눌러서 바꾸기</div>
+    <div class="szrow" id="mSizePick">
+      <button type="button" data-sz="소품">소품</button>
+      <button type="button" data-sz="중품">중품</button>
+      <button type="button" data-sz="대품">대품</button>
+    </div>
+
+    <div style="font-size:11px;color:#9fb4a6;margin:11px 0 5px">
+      잎 개수 — <b style="color:#cfe0d4">−/+</b> 로 고치세요 (성엽 −1, 노엽 +1 = 단계 이동)
+    </div>
+    <div class="grid">
+      <div class="stat"><div class="k">🌱 새순</div>
+        <div class="cnt"><button type="button" data-st="shoot" data-d="-1">−</button>
+          <span class="v" id="mShootN">–</span>
+          <button type="button" data-st="shoot" data-d="1">+</button></div></div>
+      <div class="stat"><div class="k">🍃 성엽</div>
+        <div class="cnt"><button type="button" data-st="mature" data-d="-1">−</button>
+          <span class="v" id="mMatN">–</span>
+          <button type="button" data-st="mature" data-d="1">+</button></div></div>
+      <div class="stat"><div class="k">🍂 노엽</div>
+        <div class="cnt"><button type="button" data-st="old" data-d="-1">−</button>
+          <span class="v" id="mOldN">–</span>
+          <button type="button" data-st="old" data-d="1">+</button></div></div>
+    </div>
+    <div class="grid" style="grid-template-columns:1fr 1fr">
+      <div class="stat"><div class="k">총 잎 개수</div><div class="v" id="mLeaf">–</div></div>
+      <div class="stat"><div class="k">겹침 밀도</div><div class="v" id="mDen">–</div></div>
+    </div>
+    <div style="margin:2px 0 13px;display:flex;align-items:center;justify-content:space-between;gap:10px;
+      background:#1a2620;border-radius:9px;padding:9px 12px">
+      <div style="font-size:12px;color:#cfe0d4">💧 <b>물 상태</b> — <span id="mWaterInfo">–</span></div>
+      <button type="button" class="mbtn" id="mWaterBtn" style="flex:none;padding:8px 14px">물 줬어요</button>
+    </div>
+    <div style="margin:2px 0 13px">
+      <label style="font-size:12px;color:#cfe0d4;display:block;margin-bottom:5px">📝 메모</label>
+      <textarea id="mNote" rows="2" placeholder="간단히 적어 두세요 (예: 잎 끝 마름 발견, 분갈이 예정)"
+        style="width:100%;font-size:12.5px;padding:8px;background:#14201a;color:#e8f0ea;
+        border:1px solid rgba(120,180,140,.3);border-radius:8px;resize:vertical;font-family:inherit"></textarea>
+      <div id="mNoteInfo" style="font-size:10.5px;color:#6f8073;margin-top:4px;min-height:1.2em"></div>
+    </div>
+    <div style="margin:2px 0 13px">
+      <label style="font-size:12px;color:#cfe0d4;display:flex;justify-content:space-between;margin-bottom:5px">🧭 화분 방향 돌리기 <span id="mRotV" style="color:#7ddb9a;font-weight:700">0°</span></label>
+      <input type="range" id="mRot" min="0" max="359" step="1" value="0" style="width:100%;accent-color:#4fa85a">
+    </div>
+    <div style="margin:2px 0 13px">
+      <label style="font-size:12px;color:#cfe0d4;display:block;margin-bottom:5px">🚚 자리 이동 — 자동 배치가 틀렸을 때 손으로 옮기기</label>
+      <div style="display:flex;gap:6px">
+        <select id="mMoveSel" style="flex:1;font-size:12.5px;padding:8px;background:#14201a;
+          color:#e8f0ea;border:1px solid rgba(120,180,140,.3);border-radius:8px"></select>
+        <button type="button" class="mbtn" id="mMoveBtn" style="flex:none;padding:8px 14px">이동</button>
+      </div>
+      <div id="mMoveInfo" style="font-size:10.5px;color:#6f8073;margin-top:4px"></div>
+    </div>
+    <div class="mrow">
+      <label class="mbtn">📷 새 사진으로 갱신<input type="file" id="mReFile" accept="image/*"></label>
+      <button class="mbtn danger" id="mDel">🗑 제거</button>
+    </div>
+    <div id="mUpd"></div>
+  </div>
+</div>
+
+<!-- 물주기 달력 -->
+<div id="waterCalWrap" style="position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:65;display:none;
+  align-items:center;justify-content:center">
+  <div style="background:#16211b;border:1px solid rgba(120,180,140,.3);border-radius:14px;padding:18px;width:320px;max-width:92vw">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+      <button type="button" id="waterCalPrev" style="background:none;border:none;color:#9fb4a6;font-size:20px;cursor:pointer;padding:2px 8px">‹</button>
+      <b id="waterCalTitle" style="color:#7ddb9a;font-size:14px"></b>
+      <button type="button" id="waterCalNext" style="background:none;border:none;color:#9fb4a6;font-size:20px;cursor:pointer;padding:2px 8px">›</button>
+    </div>
+    <div id="waterCalGrid" style="display:grid;grid-template-columns:repeat(7,1fr);gap:4px;font-size:11px"></div>
+    <div id="waterCalInfo" style="font-size:11px;color:#9fb4a6;margin-top:10px;min-height:1.3em"></div>
+    <div style="text-align:right;margin-top:8px">
+      <button type="button" class="mbtn" id="waterCalClose" style="padding:6px 14px">닫기</button>
+    </div>
+  </div>
+</div>
+
+<!-- 네 모서리 찍기 오버레이 -->
+<div id="calWrap" style="position:fixed;inset:0;background:rgba(0,0,0,.82);z-index:60;display:none;flex-direction:column;align-items:center;justify-content:center;gap:10px">
+  <div style="color:#e8f0ea;font-size:14px;text-align:center;line-height:1.6">
+    <b id="calTitle" style="color:#7ddb9a"></b><br>
+    <span id="calStep" style="font-size:13px"></span><br>
+    <span style="font-size:11.5px;color:#9fb4a6">선반(또는 이 사진이 덮는 구역)의 모서리를 <b>좌상 → 우상 → 우하 → 좌하</b> 순서로 클릭</span>
+  </div>
+  <div style="position:relative;max-width:88vw;max-height:62vh">
+    <img id="calImg" style="max-width:88vw;max-height:62vh;display:block;border-radius:8px">
+    <canvas id="calCv" style="position:absolute;inset:0;cursor:crosshair"></canvas>
+  </div>
+  <div id="refPick" style="display:none;gap:12px;align-items:center;background:#1d2b23;padding:10px 14px;border-radius:9px">
+    <div>
+      <div style="color:#cfe0d4;font-size:12px;margin-bottom:6px">방금 찍은 곳은 어느 화분인가요?</div>
+      <div style="color:#7f8f83;font-size:10.5px;margin-bottom:6px">지도에서 같은 위치를 클릭하세요 (위 = 온실 안쪽)</div>
+      <div id="refMap" style="position:relative;width:230px;height:153px;background:#0e1512;border:1px solid rgba(120,180,140,.25);border-radius:7px"></div>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:6px">
+      <select id="refSel" style="background:#14201a;color:#e8f0ea;border:1px solid rgba(120,180,140,.3);border-radius:7px;padding:6px"></select>
+      <button class="mbtn" id="refOk" style="padding:6px 12px;background:#2e7d32;color:#fff;border:none">확인</button>
+      <button class="mbtn" id="refSkip" style="padding:6px 12px">취소</button>
+    </div>
+  </div>
+  <div style="display:flex;gap:8px;align-items:center">
+    <label id="regionLbl" style="color:#cfe0d4;font-size:12px">이 사진이 덮는 구역
+      <select id="calRegion" style="margin-left:6px;background:#14201a;color:#e8f0ea;border:1px solid rgba(120,180,140,.3);border-radius:7px;padding:6px">
+        <option value="0,0,1,1">전체</option>
+        <option value="0,0,0.55,1">왼쪽 절반</option>
+        <option value="0.45,0,1,1">오른쪽 절반</option>
+        <option value="0,0,1,0.55">위쪽 절반</option>
+        <option value="0,0.45,1,1">아래쪽 절반</option>
+        <option value="0,0,0.55,0.55">좌상 사분면</option>
+        <option value="0.45,0,1,0.55">우상 사분면</option>
+        <option value="0,0.45,0.55,1">좌하 사분면</option>
+        <option value="0.45,0.45,1,1">우하 사분면</option>
+      </select>
+    </label>
+    <button class="mbtn" id="calUndo" style="padding:8px 14px">↺ 다시</button>
+    <button class="mbtn" id="calNext" style="padding:8px 14px;background:#2e7d32;color:#fff;border:none" disabled>다음 →</button>
+    <button class="mbtn danger" id="calCancel" style="padding:8px 14px">취소</button>
+  </div>
+</div>
+
+<script src="/static/three.min.js"></script>
+<script src="/static/OrbitControls.js"></script>
+<script>
+// ===== 3D 기본 =====
+const W=60,D=40,H=50;
+const scene=new THREE.Scene(); scene.background=new THREE.Color(0x0e1512);
+const camera=new THREE.PerspectiveCamera(50,innerWidth/innerHeight,1,3000);
+const renderer=new THREE.WebGLRenderer({antialias:true});
+renderer.setSize(innerWidth,innerHeight); renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+renderer.shadowMap.enabled=true; renderer.shadowMap.type=THREE.PCFSoftShadowMap;
+document.getElementById('app').appendChild(renderer.domElement);
+const controls=new THREE.OrbitControls(camera,renderer.domElement);
+controls.enableDamping=true; controls.target.set(0,10,0);
+camera.position.set(46,42,60);
+scene.add(new THREE.HemisphereLight(0x9fb8c8,0x1a241e,0.5));
+scene.add(new THREE.AmbientLight(0xffffff,0.28));
+const floor=new THREE.Mesh(new THREE.PlaneGeometry(W,D),new THREE.MeshStandardMaterial({color:0x1a221d,roughness:1}));
+floor.rotation.x=-Math.PI/2; floor.receiveShadow=true; scene.add(floor);
+scene.add(new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(W,H,D)),new THREE.LineBasicMaterial({color:0x3f5a49})).translateY(H/2));
+// 조명은 실제로 좌·우 레일에 3개(2+1) 달려 있다. 레일에 고정돼 있으니
+// 좌우(x)는 못 옮기고, 레일을 따라(z)만 3D 에서 끌어 조절한다.
+// 점수 계산이 쓰는 위치와 3D 에 보이는 위치가 같아야 디지털 트윈이다.
+const RAIL_MARGIN=8, RAIL_X=W/2-RAIL_MARGIN;
+let rig=new THREE.Group(); scene.add(rig);
+let ENV_LIGHTS=[];
+const LIGHT_HANDLE_MAT=new THREE.MeshStandardMaterial({color:0xff86c8,emissive:0xff86c8,emissiveIntensity:0.9});
+// 레일 자체(고정 안내선) — 조명이 이 선을 벗어날 수 없다는 걸 보여 준다
+[-1,1].forEach(sign=>{
+  const rail=new THREE.Mesh(new THREE.BoxGeometry(0.6,0.6,D),new THREE.MeshStandardMaterial({color:0x445048}));
+  rail.position.set(sign*RAIL_X,H-3,0); scene.add(rail);
+});
+function railX(side){return side==='left'?-RAIL_X:RAIL_X;}
+function buildRig(env){
+  ENV_LIGHTS=(env.lights||[]).map(l=>({...l}));
+  scene.remove(rig); rig=new THREE.Group(); scene.add(rig);
+  ENV_LIGHTS.forEach((l,i)=>{
+    const pn=new THREE.Mesh(new THREE.BoxGeometry(10,1,6),LIGHT_HANDLE_MAT);
+    pn.userData.lightIndex=i; rig.add(pn);
+    // 판을 정확히 겨냥하기 힘드니 잡기 쉬운 투명 손잡이를 둘레에 겹쳐 둔다
+    const grab=new THREE.Mesh(new THREE.SphereGeometry(6,10,10),new THREE.MeshBasicMaterial({visible:false}));
+    grab.userData.lightIndex=i; pn.add(grab);
+    const sp=new THREE.SpotLight(0xffe1f1,0.7*(l.power||1),0,
+      THREE.MathUtils.degToRad(l.angle||30),0.5,1.0);
+    sp.castShadow=true; rig.add(sp,sp.target);
+    l._pin=pn; l._spot=sp;
+    positionLight(i);
+  });
+  renderLightPanel();
+}
+function positionLight(i){
+  const l=ENV_LIGHTS[i]; if(!l)return;
+  l.x=railX(l.side);
+  l._pin.position.set(l.x,l.y,l.z);
+  l._spot.position.set(l.x,l.y,l.z);
+  l._spot.angle=THREE.MathUtils.degToRad(l.angle||30);
+  l._spot.intensity=0.7*(l.power||1);
+  // 빔이 향하는 지점 — 온실 중앙 쪽으로 살짝 기울여 놓는다 (스팟등이 안쪽을 보게)
+  l._spot.target.position.set(l.x*0.35,0,l.z*0.35);
+  l._spot.target.updateMatrixWorld();
+}
+
+// ===== 조명 끌어서 옮기기 (레일 방향으로만) =====
+const lray=new THREE.Raycaster(), lmouse=new THREE.Vector2();
+let dragLight=null; const dragPlane=new THREE.Plane();
+function ndc(ev){
+  const r=renderer.domElement.getBoundingClientRect();
+  lmouse.x=((ev.clientX-r.left)/r.width)*2-1;
+  lmouse.y=-((ev.clientY-r.top)/r.height)*2+1;
+}
+renderer.domElement.addEventListener('pointerdown',ev=>{
+  ndc(ev); lray.setFromCamera(lmouse,camera);
+  const hit=lray.intersectObjects(rig.children,true);
+  if(!hit.length||hit[0].object.userData.lightIndex===undefined)return;
+  dragLight=hit[0].object.userData.lightIndex;
+  dragPlane.setFromNormalAndCoplanarPoint(new THREE.Vector3(0,1,0),hit[0].point);
+  controls.enabled=false;
+});
+addEventListener('pointermove',ev=>{
+  if(dragLight===null)return;
+  ndc(ev); lray.setFromCamera(lmouse,camera);
+  const pt=new THREE.Vector3();
+  if(!lray.ray.intersectPlane(dragPlane,pt))return;
+  const l=ENV_LIGHTS[dragLight];
+  l.z=Math.round(Math.max(-D/2,Math.min(D/2,pt.z))*10)/10;   // x 는 레일에 고정 — z 만 따라간다
+  positionLight(dragLight); renderLightPanel();
+});
+addEventListener('pointerup',()=>{
+  if(dragLight===null)return;
+  dragLight=null; controls.enabled=true; saveEnvironment();
+});
+
+function renderLightPanel(){
+  const box=document.getElementById('lightList'); if(!box)return;
+  box.innerHTML=ENV_LIGHTS.map((l,i)=>`
+    <div style="display:flex;gap:6px;align-items:center;font-size:11px;color:#e8ddc0;
+      padding:4px 6px;margin-bottom:3px;border:1px solid rgba(180,150,90,.25);border-radius:6px;background:#221e14">
+      <span>💡${i+1}</span>
+      <button type="button" class="lside" data-i="${i}" style="font-size:10px;padding:2px 6px;border-radius:5px;
+        border:1px solid rgba(120,180,140,.3);background:${l.side==='left'?'#2e7d32':'#24382c'};color:#e8f0ea;cursor:pointer">
+        ${l.side==='left'?'◀ 좌측':'우측 ▶'}</button>
+      <span style="color:#6f8073">레일 z${l.z}</span>
+      <label style="margin-left:auto;display:flex;align-items:center;gap:2px">각도
+        <input type="number" class="lang" data-i="${i}" value="${l.angle||30}" min="5" max="80"
+          style="width:38px;background:#14201a;color:#e8f0ea;border:1px solid rgba(120,180,140,.3);border-radius:4px;padding:2px"></label>
+      <label style="display:flex;align-items:center;gap:2px">밝기
+        <input type="number" class="lpow" data-i="${i}" value="${l.power||1}" step="0.1" min="0.1" max="3"
+          style="width:40px;background:#14201a;color:#e8f0ea;border:1px solid rgba(120,180,140,.3);border-radius:4px;padding:2px"></label>
+    </div>`).join('');
+  box.querySelectorAll('.lang,.lpow').forEach(inp=>inp.addEventListener('change',ev=>{
+    const i=+ev.target.dataset.i, key=ev.target.classList.contains('lang')?'angle':'power';
+    ENV_LIGHTS[i][key]=parseFloat(ev.target.value)||(key==='angle'?30:1);
+    positionLight(i); saveEnvironment();
+  }));
+  box.querySelectorAll('.lside').forEach(btn=>btn.addEventListener('click',()=>{
+    const i=+btn.dataset.i, l=ENV_LIGHTS[i];
+    l.side=l.side==='left'?'right':'left';
+    positionLight(i); renderLightPanel(); saveEnvironment();
+  }));
+}
+document.getElementById('lightReset').addEventListener('click',()=>{
+  buildRig({lights:[{side:'left',y:47,z:17,power:1,angle:30},{side:'left',y:47,z:-13,power:1,angle:30},
+                    {side:'right',y:47,z:2,power:1,angle:30}]});
+  saveEnvironment();
+});
+async function saveEnvironment(){
+  const fd=new FormData();
+  fd.append('lights',JSON.stringify(ENV_LIGHTS.map(({side,y,z,power,angle})=>({side,y,z,power,angle}))));
+  await fetch('/api/environment',{method:'POST',body:fd});
+  await loadPlacement();
+  if(hmKind!=='off') showHeatmap(hmKind);
+}
+
+// ===== 빛·바람 히트맵 (3D 바닥) =====
+// 어디가 밝고 어디에 바람이 안 닿는지는 숫자보다 그림이 빠르다.
+const hmCv=document.createElement('canvas');
+const hmTex=new THREE.CanvasTexture(hmCv);
+const hmPlane=new THREE.Mesh(new THREE.PlaneGeometry(W,D),
+  new THREE.MeshBasicMaterial({map:hmTex,transparent:true,opacity:0.72,depthWrite:false}));
+hmPlane.rotation.x=-Math.PI/2; hmPlane.position.y=0.25; hmPlane.visible=false; scene.add(hmPlane);
+function paintHeatmap(grid,kind){
+  const rows=grid.length, cols=grid[0].length;
+  hmCv.width=cols; hmCv.height=rows;
+  const ctx=hmCv.getContext('2d'), img=ctx.createImageData(cols,rows);
+  for(let r=0;r<rows;r++)for(let c=0;c<cols;c++){
+    const v=Math.max(0,Math.min(1,grid[r][c]));
+    // 캔버스 첫 줄(위) = uv v=1 = 판의 +y = 눕히면 월드 z=-D/2.
+    // 격자 0번 줄도 z=-D/2 라 그대로 얹으면 맞는다 (flipY 가 이미 뒤집어 준다).
+    const o=(r*cols+c)*4;
+    if(kind==='light'){ img.data[o]=40+215*v; img.data[o+1]=30+200*v; img.data[o+2]=20+40*v; }
+    else { img.data[o]=20+40*v; img.data[o+1]=90+130*v; img.data[o+2]=110+145*v; }
+    img.data[o+3]=60+150*v;
+  }
+  ctx.putImageData(img,0,0);
+  hmTex.needsUpdate=true; hmPlane.visible=true;
+}
+
+// ===== 알로카시아 모델 =====
+function leafShape(){const s=new THREE.Shape();s.moveTo(0,2.1);
+  s.bezierCurveTo(1.05,1.7,0.95,0.25,0.6,-0.15);s.bezierCurveTo(0.45,-0.5,0.2,-0.5,0.06,-0.18);
+  s.lineTo(0,-0.02);s.lineTo(-0.06,-0.18);s.bezierCurveTo(-0.2,-0.5,-0.45,-0.5,-0.6,-0.15);
+  s.bezierCurveTo(-0.95,0.25,-1.05,1.7,0,2.1);return s;}
+const LEAF_GEO=new THREE.ShapeGeometry(leafShape(),10);
+const PET_MAT=new THREE.MeshStandardMaterial({color:0x4f8a44,roughness:0.7});
+// 잎 단계별 색: 새순=연두 / 성숙잎=녹색 / 늙은잎=노란색
+const STAGE_COL={shoot:0xa4e05a, mature:0x35913c, old:0xe0cf4a};
+function makeAlocasia(unit,counts){
+  const seq=[];
+  for(let i=0;i<(counts.old||0);i++) seq.push('old');
+  for(let i=0;i<(counts.mature||0);i++) seq.push('mature');
+  for(let i=0;i<(counts.shoot||0);i++) seq.push('shoot');
+  if(!seq.length) seq.push('mature','mature');
+  const total=Math.min(seq.length,14);
+  const g=new THREE.Group();
+  for(let i=0;i<total;i++){
+    const stage=seq[i], ang=(i/total)*Math.PI*2+i*0.7, px=Math.cos(ang), pz=Math.sin(ang);
+    const petH=(4+(i%3))*unit, lean=0.32+(i%2)*0.18;
+    const pet=new THREE.Mesh(new THREE.CylinderGeometry(0.1*unit,0.16*unit,petH,5),PET_MAT);
+    pet.position.set(px*0.5*unit,petH/2,pz*0.5*unit); pet.rotation.set(pz*lean,0,-px*lean); pet.castShadow=true; g.add(pet);
+    const mat=new THREE.MeshStandardMaterial({color:STAGE_COL[stage],roughness:0.5,side:THREE.DoubleSide});
+    const bl=new THREE.Mesh(LEAF_GEO,mat);
+    const mul=stage==='shoot'?0.6:stage==='old'?1.15:1.0;         // 새순 작게, 늙은잎 크게
+    const bs=(1.5+(i%3)*0.35)*unit*mul; bl.scale.set(bs,bs,bs);
+    bl.position.set(px*(0.5*unit+petH*0.5*lean+bs*0.2),(petH+Math.cos(lean)*0.3*unit)*0.98,pz*(0.5*unit+petH*0.5*lean+bs*0.2));
+    bl.rotation.y=-ang+Math.PI/2; bl.rotation.x=-1.38-lean*0.15; bl.castShadow=true; g.add(bl);
+  }
+  return g;}
+// 3D 식물 크기 = 모델1의 '맨 위 잎' 크기
+const TOP_UNIT={"소엽":1.3,"중엽":1.85,"대엽":2.5,"없음":1.15};
+
+function nameSprite(text){const cv=document.createElement('canvas');cv.width=320;cv.height=80;
+  const x=cv.getContext('2d');x.fillStyle='rgba(18,26,22,0.85)';x.beginPath();x.roundRect(6,18,308,46,12);x.fill();
+  x.fillStyle='#c9f2d4';x.font='bold 34px sans-serif';x.textAlign='center';x.textBaseline='middle';
+  x.fillText(text.length>12?text.slice(0,12)+'…':text,160,42);
+  const s=new THREE.Sprite(new THREE.SpriteMaterial({map:new THREE.CanvasTexture(cv),depthTest:false}));
+  s.scale.set(13*Math.max(.55,POT_FIT),3.3*Math.max(.55,POT_FIT),1);return s;}
+
+// 모양 그룹(A,B,C…) 딱지 색 — 같은 품종끼리 한눈에 보이게
+const SHAPE_COLS=['#3f7bd6','#b3529f','#c07a2a','#2f8f86','#8a5cd6','#a8452f'];
+function shapeColor(tag){
+  const i=(tag&&tag.length===1)?tag.charCodeAt(0)-65:parseInt(String(tag).slice(1),10)||0;
+  return SHAPE_COLS[((i%SHAPE_COLS.length)+SHAPE_COLS.length)%SHAPE_COLS.length];
+}
+
+// ===== 식물 오브젝트 관리 =====
+const objs={}; // id -> {group,data,label}
+const ray=new THREE.Raycaster(),ptr=new THREE.Vector2();
+// 화분이 실제 간격보다 크면 서로 파고든다. 가장 가까운 두 화분 간격에 맞춰
+// 전체를 한 비율로 줄인다(비율은 유지). 1 = 줄일 필요 없음.
+let POT_FIT=1;
+function computePotFit(items){
+  POT_FIT=1;
+  if(items.length<2)return;
+  let m=Infinity;
+  for(let i=0;i<items.length;i++)for(let j=i+1;j<items.length;j++){
+    const d=Math.hypot(items[i].x-items[j].x, items[i].z-items[j].z);
+    if(d>0&&d<m)m=d;
+  }
+  if(!isFinite(m))return;
+  const biggest=2.5*2.1;                  // 대엽 화분 반지름
+  POT_FIT=Math.max(0.35, Math.min(1, (m*0.46)/biggest));
+}
+
+// 물 준 지 오래돼 마름 위험이면 흙이 밝은 갈색으로 바뀐다 (센서 없이, 사람이
+// 기록한 날짜 기준 — /api/plants 가 계산해서 soil_dry 로 내려준다)
+const SOIL_WET=0x241d16, SOIL_DRY=0xc8935b;
+function buildObj(p){
+  const g=new THREE.Group(); const unit=TOP_UNIT[p.top_leaf_size]||1.4; const potH=6+unit*1.6;
+  const empty=!!p.empty;
+  const pot=new THREE.Mesh(new THREE.CylinderGeometry(unit*2.1,unit*1.6,potH,8),
+    new THREE.MeshStandardMaterial({color:0xededed,roughness:0.85}));
+  pot.position.y=potH/2; pot.castShadow=pot.receiveShadow=true; g.add(pot);
+  // 흙은 심어진 화분에도 항상 보인다 — 마름 위험은 색으로, 잎 유무와는 별개다
+  const soil=new THREE.Mesh(new THREE.CylinderGeometry(unit*1.9,unit*1.9,0.4,8),
+    new THREE.MeshStandardMaterial({color:p.soil_dry?SOIL_DRY:SOIL_WET,roughness:1}));
+  soil.position.y=potH-0.1; g.add(soil);
+  const counts={shoot:p.shoot_count||0,mature:p.mature_count||0,old:p.old_count||0};
+  if(!empty&&counts.shoot+counts.mature+counts.old===0) counts.mature=Math.max(2,p.leaf_count||3);
+  if(!empty){ const plant=makeAlocasia(unit,counts); plant.position.y=potH-0.5; g.add(plant); }
+  // 이름표는 겹치기 쉬워 작게 + 화분마다 높이를 조금씩 어긋나게
+  const label=nameSprite((p.pos?p.pos+' · ':'')+p.name);
+  const jitter=((parseInt(p.id,36)||0)%3)*2.4;
+  label.position.y=potH+unit*4+2+jitter; g.add(label);
+  g.scale.setScalar(POT_FIT);
+  g.position.set(p.x,0,p.z); g.rotation.y=((p.rot||0))*Math.PI/180;
+  g.traverse(o=>o.userData.pid=p.id); scene.add(g);
+  objs[p.id]={group:g,data:p,label};
+}
+function removeObj(id){const o=objs[id];if(!o)return;scene.remove(o.group);delete objs[id];}
+function rebuildObj(p){removeObj(p.id);buildObj(p);}
+
+// ===== 리스트 & 상태 =====
+async function loadAll(){
+  const d=await(await fetch('/api/plants')).json();
+  document.getElementById('eng').textContent=d.engine;
+  // 데모 모드는 사진과 무관한 난수를 뱉는다. 작은 라벨 하나로는 그냥 지나치게 돼서
+  // (실제로 그 상태로 탐지 품질을 여러 번 판단했다) 눈에 띄는 경고를 띄운다.
+  document.getElementById('demoWarn').style.display = (d.engine==='demo') ? 'block' : 'none';
+  Object.keys(objs).forEach(removeObj);
+  computePotFit(d.plants);
+  d.plants.forEach(buildObj); refreshList(); await refreshSlots(); await loadLeaves(); await loadPlacement();
+}
+function refreshList(){
+  const list=document.getElementById('list'); const items=Object.values(objs).map(o=>o.data);
+  document.getElementById('cnt').textContent='('+items.length+')';
+  if(!items.length){list.innerHTML='<div class="empty">아직 없어요. 위에서 사진+이름으로 추가하세요.</div>';return;}
+  list.innerHTML='';
+  items.sort((a,b)=>(a.pos||'').localeCompare(b.pos||''));
+  items.forEach(p=>{
+    const el=document.createElement('div'); el.className='item';
+    el.innerHTML=`<span class="nm"></span><span class="sg"></span><span class="sz"></span><span class="x">×</span>`;
+    el.querySelector('.nm').textContent=(p.pos?p.pos+' · ':'')+p.name; const szEl=el.querySelector('.sz'); szEl.textContent=p.size_class;
+    if(p.size_class==='미검출'){szEl.style.background='#4a3a1c';szEl.style.color='#e8c96a';}
+    const sg=el.querySelector('.sg');
+    if(p.shape_group){ sg.textContent=p.shape_group; sg.style.cssText=
+      `font-size:10px;font-weight:800;color:#fff;background:${shapeColor(p.shape_group)};border-radius:20px;padding:1px 7px;flex:none`; }
+    el.addEventListener('click',ev=>{ if(ev.target.classList.contains('x')){delPlant(p.id);ev.stopPropagation();return;} openModal(p); });
+    list.appendChild(el);
+  });
+}
+// 자리 지도 + 자리 선택 갱신
+async function refreshSlots(){
+  const slots=await(await fetch('/api/slots')).json();
+  const sel=document.getElementById('pos'); const prev=sel.value; sel.innerHTML='';
+  const empties=slots.filter(s=>!s.occupied);
+  if(empties.length){ empties.forEach(s=>{const o=document.createElement('option');o.value=s.label;o.textContent='자리 '+s.label;sel.appendChild(o);});
+    if(empties.some(s=>s.label===prev)) sel.value=prev; }
+  else { const o=document.createElement('option');o.value='';o.textContent='빈 자리 없음';sel.appendChild(o); }
+  const map=document.getElementById('map'); map.innerHTML='';
+  slots.forEach(s=>{
+    const cell=document.createElement('div'); cell.className='cell'+(s.occupied?' on':'');
+    const nm=(s.occupied&&objs[s.plant_id])?objs[s.plant_id].data.name:'빈자리';
+    const lb=document.createElement('div'); lb.className='lb'; lb.textContent=s.label;
+    const nmEl=document.createElement('div'); nmEl.className='nm'; nmEl.textContent=nm;
+    cell.appendChild(lb); cell.appendChild(nmEl);
+    cell.addEventListener('click',()=>{
+      if(s.occupied&&objs[s.plant_id]) openModal(objs[s.plant_id].data);
+      else { document.getElementById('pos').value=s.label; document.getElementById('name').focus(); }
+    });
+    map.appendChild(cell);
+  });
+}
+
+// ===== 추가 =====
+const nameEl=document.getElementById('name'),fileEl=document.getElementById('file'),addBtn=document.getElementById('addBtn'),statusEl=document.getElementById('status');
+function chkForm(){addBtn.disabled=!(nameEl.value.trim()&&fileEl.files[0]);}
+nameEl.addEventListener('input',chkForm); fileEl.addEventListener('change',chkForm);
+addBtn.addEventListener('click',async()=>{
+  addBtn.disabled=true; statusEl.textContent='분석 중…';
+  const fd=new FormData(); fd.append('name',nameEl.value.trim()); fd.append('file',fileEl.files[0]); fd.append('pos',document.getElementById('pos').value);
+  try{
+    const r=await fetch('/api/plants',{method:'POST',body:fd});
+    if(!r.ok){const e=await r.json().catch(()=>({}));throw new Error(e.detail||'추가 실패');}
+    const p=await r.json(); buildObj(p); refreshList(); await refreshSlots(); openModal(p);
+    statusEl.textContent='✅ 자리 '+p.pos+' 에 '+p.name+' 추가됨'; nameEl.value=''; fileEl.value=''; chkForm();
+  }catch(e){statusEl.textContent='⚠️ '+e.message; addBtn.disabled=false;}
+});
+
+// ===== 농장 전체 사진 스캔 =====
+const scanStatus=document.getElementById('scanStatus');
+const MODE_HELP={
+  keep:'잎이 가려져 덜 잡혀도 기존 개수를 지킵니다. 늘어난 만큼만 새 잎으로 기록해요.',
+  update:'탐지된 값으로 덮어씁니다. 직접 고친 값도 사라집니다.',
+  replace:'등록된 식물을 모두 지우고 처음부터 다시 만듭니다.'};
+const scanModeEl=document.getElementById('scanMode');
+function updModeHelp(){document.getElementById('scanModeHelp').textContent=MODE_HELP[scanModeEl.value];}
+scanModeEl.addEventListener('change',updModeHelp); updModeHelp();
+// 스캔 결과 문구 — 새 잎이 몇 장 났는지가 핵심
+function scanMsg(d,how){
+  const nl=d.new_leaves?` · 새 잎 ${d.new_leaves}장`:'';
+  const rm=d.removed?` · 유령 ${d.removed}개 정리`:'';
+  return `✅ ${d.count}개 개체${nl}${rm} · 모양 ${d.shape_groups}종 (${how})`;
+}
+document.getElementById('scanFile').addEventListener('change',async(e)=>{
+  const f=e.target.files[0]; if(!f)return;
+  // 화분 자리를 이 스캔 사진에서 같이 잡고 싶으면, 별도 사진 없이 지금 사진으로
+  // 먼저 모서리·화분 중심을 찍게 한 뒤 그 사진 그대로 스캔까지 잇는다.
+  if(document.getElementById('scanWithPots').checked){
+    CAL.mode='potscan'; CAL.files=[f]; CAL.i=0;
+    calWrap.style.display='flex'; showCal();
+    e.target.value='';
+    return;
+  }
+  scanStatus.textContent='분석 중… (여러 개체를 묶는 중)';
+  const fd=new FormData(); fd.append('file',f);
+  fd.append('mode',document.getElementById('scanMode').value);
+  try{
+    const r=await fetch('/api/scan',{method:'POST',body:fd});
+    if(!r.ok){const err=await r.json().catch(()=>({}));throw new Error(err.detail||'스캔 실패');}
+    const d=await r.json();
+    await loadAll();
+    const how=({pot_preset:'지정한 화분자리',canopy:'캐노피',pot:'화분+생김새'})[d.grouped_by]||'거리+생김새';
+    scanStatus.textContent=scanMsg(d,how);
+  }catch(err){ scanStatus.textContent='⚠️ '+err.message; }
+  e.target.value='';
+});
+
+// ===== 여러 장 + 원근 보정 =====
+// 사진을 이어 붙이지 않는다. 사진마다 네 모서리로 원근 변환을 구해
+// '탐지 좌표'만 하나의 선반 좌표계로 옮기고 겹침 중복을 지운다.
+const CAL={files:[],i:0,quads:[],regions:[],pts:[],pots:[],refs:[],allRefs:[],
+           potList:[],pending:null,mode:'multi',url:null};
+const calWrap=document.getElementById('calWrap'),calImg=document.getElementById('calImg'),
+      calCv=document.getElementById('calCv'),calNext=document.getElementById('calNext');
+const DEF_REGION=['0,0,1,1','0,0,0.55,1','0.45,0,1,1','0,0,1,0.55','0,0.45,1,1'];
+
+// 저장된 화분 배치를 작은 지도로 그린다. 자리 이름(C3)만으론 어느 화분인지 알 수 없어서,
+// 실제 배치 그대로 보여 주고 같은 위치를 누르게 한다.
+function renderPotMap(el,{used=new Set(),onPick=null,marked=new Set(),onSlot=null}={}){
+  el.innerHTML='';
+  const W=el.clientWidth||230, H=el.clientHeight||153;
+  CAL.potList.forEach(p=>{
+    const d=document.createElement('div');
+    const off=used.has(p.i);
+    d.textContent=p.slot;
+    d.style.cssText=`position:absolute;left:${p.u*(W-30)+3}px;top:${p.v*(H-20)+3}px;
+      width:26px;height:15px;line-height:15px;text-align:center;border-radius:4px;
+      font-size:8.5px;font-weight:700;user-select:none;
+      background:${off?'#33413a':(marked.has(p.i)?'#e8a64a':'#2e7d32')};
+      color:${off?'#6f8073':'#fff'};cursor:${off||!(onPick||onSlot)?'default':'pointer'}`;
+    if(onPick&&!off) d.addEventListener('click',()=>onPick(p.i));
+    // 잎을 여기로 끌어다 놓으면(또는 잎을 고른 채 누르면) 그 화분 소속이 된다
+    if(onSlot){
+      d.addEventListener('click',()=>onSlot(p.slot));
+      d.addEventListener('dragover',ev=>{ev.preventDefault();d.style.outline='2px solid #e8c96a';});
+      d.addEventListener('dragleave',()=>{d.style.outline='';});
+      d.addEventListener('drop',ev=>{ev.preventDefault();d.style.outline='';
+        onSlot(p.slot,ev.dataTransfer.getData('text/plain'));});
+    }
+    el.appendChild(d);
+  });
+}
+
+// ===== 애매한 잎 소속 바로잡기 =====
+// 화분 두 개 사이에 걸친 잎은 자동 판정이 흔들린다. 그런 잎만 골라 보여 주고
+// 사람이 화분으로 옮기게 한다. 옮긴 자리는 서버가 기억해 재스캔에도 살아남는다.
+let pickedLeaf=null;
+const STAGE_KO={shoot:'새순',mature:'성엽',old:'노엽'};
+async function loadLeaves(){
+  const wrap=document.getElementById('leafFixWrap');
+  let d; try{ d=await(await fetch('/api/leaves?ambiguous=1')).json(); }catch(e){ return; }
+  const list=document.getElementById('leafFix');
+  document.getElementById('leafAmb').textContent=d.count;
+  const info=document.getElementById('leafFixInfo');
+  info.innerHTML=d.fixes?`✋ 손으로 옮긴 잎 ${d.fixes}장 기억 중 <a href="#" id="leafFixClear" style="color:#c98">되돌리기</a>`:'';
+  const clr=document.getElementById('leafFixClear');
+  if(clr) clr.addEventListener('click',async ev=>{ev.preventDefault();
+    await fetch('/api/leaves/fixes',{method:'DELETE'}); await loadLeaves();});
+  wrap.style.display=(d.count||d.fixes)?'block':'none';
+  list.innerHTML='';
+  pickedLeaf=null;
+  d.leaves.forEach(lf=>{
+    const row=document.createElement('div');
+    row.draggable=true;
+    row.style.cssText=`display:flex;gap:6px;align-items:center;padding:5px 7px;margin-bottom:4px;
+      border:1px solid rgba(180,150,90,.3);border-radius:6px;background:#221e14;
+      font-size:11px;color:#e8ddc0;cursor:grab`;
+    // 겨룬 상대 — 최근접이 지금 소속과 다르면 그쪽이, 같으면 차순위가 경쟁 화분이다
+    const rival=(lf.assign.nearest&&lf.assign.nearest!==lf.pot_slot)?lf.assign.nearest:lf.assign.second;
+    row.innerHTML=`<b>${lf.pot_slot||'?'}</b> <span style="color:#9fb4a6">↔ ${rival||'–'}</span>`
+      +`<span style="color:#6f8073;margin-left:auto">${STAGE_KO[lf.stage]||lf.stage} · 격차 ${lf.assign.margin}</span>`;
+    row.addEventListener('dragstart',ev=>ev.dataTransfer.setData('text/plain',lf.leaf_id));
+    row.addEventListener('click',()=>{
+      pickedLeaf=(pickedLeaf===lf.leaf_id)?null:lf.leaf_id;
+      [...list.children].forEach(c=>c.style.borderColor='rgba(180,150,90,.3)');
+      if(pickedLeaf) row.style.borderColor='#e8c96a';
+    });
+    list.appendChild(row);
+  });
+  showPotMap(CAL.potList.length>0);
+}
+// ===== 배치 최적화 =====
+// 화분 자리는 못 옮기고 식물은 옮길 수 있다. 조명·그늘·통풍을 계산해
+// '무엇과 무엇을 바꾸면 얼마나 좋아지는지'를 알려 준다. 화분은 사람이 옮긴다.
+let planSwaps=null, hmKind='off';
+async function loadPlacement(){
+  let d; try{ d=await(await fetch('/api/placement')).json(); }catch(e){ return; }
+  document.getElementById('plScore').textContent=d.spots.length?d.score:'–';
+  document.getElementById('plWorst').innerHTML=d.worst.map(s=>
+    `<div>${s.slot} <b style="color:${s.score<40?'#e8a64a':'#9fb4a6'}">${s.score}점</b>`
+    +` <span style="color:#5c6b60">빛 ${s.light} · 그늘 ${s.shade}</span></div>`).join('')
+    || '<div>식물을 등록하면 자리별 점수가 나옵니다</div>';
+}
+document.getElementById('plOpt').addEventListener('click',async()=>{
+  const box=document.getElementById('plPlan');
+  box.style.display='block'; box.innerHTML='<div style="font-size:11px;color:#6f8073">계산 중…</div>';
+  const d=await(await fetch('/api/placement/optimize',{method:'POST'})).json();
+  planSwaps=d.moves;
+  if(!d.moves.length){ box.innerHTML='<div style="font-size:11px;color:#7ddb9a">✅ 지금 배치가 이미 최선이에요</div>'; return; }
+  // 둘씩 맞바꿔 끝나면 '↔', 셋 이상 돌아가면 '→ … → 처음' 으로 보여 준다
+  const ring=r=>r.length===2?`<b>${r[0]}</b> ↔ <b>${r[1]}</b>`
+    :r.map(s=>`<b>${s}</b>`).join(' → ')+` → <b>${r[0]}</b>`;
+  box.innerHTML=`<div style="font-size:11px;color:#cfe0d4;margin-bottom:5px">`
+    +`${d.before} → <b style="color:#7ddb9a">${d.after}</b>점 (+${d.gain}) · ${d.moves.length}개 이동</div>`
+    +d.cycles.map(r=>`<div style="font-size:11px;color:#e8ddc0;padding:5px 7px;margin-bottom:3px;`
+      +`border:1px solid rgba(180,150,90,.28);border-radius:6px;background:#221e14">${ring(r)}</div>`).join('')
+    +`<button type="button" class="mbtn" id="plApply" style="margin-top:6px">✅ 화분을 옮겼어요 · 기록 반영</button>`;
+  document.getElementById('plApply').addEventListener('click',async()=>{
+    const fd=new FormData(); fd.append('moves',JSON.stringify(planSwaps));
+    const r=await fetch('/api/placement/apply',{method:'POST',body:fd});
+    if(!r.ok){ scanStatus.textContent='⚠️ 반영 실패'; return; }
+    const res=await r.json();
+    box.style.display='none'; planSwaps=null;
+    scanStatus.textContent=`✅ ${res.applied}개 이동 반영 · 배치 점수 ${res.score}`;
+    await loadAll();
+  });
+});
+document.getElementById('plHeat').addEventListener('click',()=>showHeatmap(hmKind==='off'?'light':'off'));
+async function showHeatmap(kind){
+  hmKind=kind;
+  const btn=document.getElementById('plHeat');
+  if(kind==='off'){ hmPlane.visible=false; btn.style.background='#24382c'; return; }
+  btn.style.background='#2e7d32';
+  const d=await(await fetch('/api/placement/heatmap?cols=40&rows=27')).json();
+  paintHeatmap(d.light,'light');
+}
+async function loadEnvironment(){
+  try{ buildRig(await(await fetch('/api/environment')).json()); }catch(e){}
+}
+
+async function moveLeaf(slot,leafId){
+  const id=leafId||pickedLeaf;
+  if(!id){ scanStatus.textContent='먼저 옮길 잎을 고르세요'; return; }
+  const fd=new FormData(); fd.append('pot_slot',slot);
+  const r=await fetch('/api/leaves/'+id,{method:'PATCH',body:fd});
+  if(!r.ok){ const e=await r.json().catch(()=>({})); scanStatus.textContent='⚠️ '+(e.detail||'옮기기 실패'); return; }
+  pickedLeaf=null;
+  scanStatus.textContent='✅ 잎을 '+slot+' 화분으로 옮겼어요';
+  await loadAll();
+}
+function commitRef(i){
+  if(!CAL.pending)return;
+  const pot=CAL.potList.find(p=>p.i===i);
+  CAL.refs.push({...CAL.pending,i,label:pot.slot});
+  CAL.pending=null; document.getElementById('refPick').style.display='none';
+  drawCal(); updCalStep(); calNext.disabled=CAL.refs.length<4;
+}
+// 기준 화분 지정 확인/취소
+document.getElementById('refOk').addEventListener('click',()=>{
+  const sel=document.getElementById('refSel');
+  if(CAL.pending&&sel.value) commitRef(+sel.value);
+});
+document.getElementById('refSkip').addEventListener('click',()=>{
+  CAL.pending=null; document.getElementById('refPick').style.display='none'; drawCal();
+});
+
+// 화분 기준으로 스캔: 아는 화분 4개 이상만 찍으면 모서리가 없어도 원근이 펴진다
+document.getElementById('refFile').addEventListener('change',async e=>{
+  const fs=[...e.target.files]; e.target.value='';
+  if(!fs.length)return;
+  const d=await(await fetch('/api/pots')).json();
+  if(!d.count){ scanStatus.textContent='⚠️ 먼저 🪴 화분 자리를 지정해 주세요'; return; }
+  CAL.potList=d.pots; CAL.mode='ref'; CAL.files=fs; CAL.i=0; CAL.allRefs=[];
+  calWrap.style.display='flex'; showCal();
+});
+
+// 화분 자리 지정: 네 모서리 → 화분 중심들 (한 번만 해 두면 계속 재사용)
+document.getElementById('potFile').addEventListener('change',e=>{
+  const f=e.target.files[0]; e.target.value='';
+  if(!f)return;
+  CAL.mode='pot'; CAL.files=[f]; CAL.i=0;
+  calWrap.style.display='flex'; showCal();
+});
+function bindPotClear(){
+  const a=document.getElementById('potClear'); if(!a)return;
+  a.addEventListener('click',async ev=>{ ev.preventDefault();
+    await fetch('/api/pots',{method:'DELETE'});
+    document.getElementById('potInfo').textContent='화분 자리를 지웠습니다. 다시 지정할 수 있어요.';
+    CAL.potList=[]; showRefBtn(false); showPotMap(false);
+  });
+}
+async function loadPots(){
+  try{ const d=await(await fetch('/api/pots')).json();
+    CAL.potList=d.pots||[];
+    if(d.count){ document.getElementById('potInfo').innerHTML=
+      `✅ 화분 ${d.count}개 지정됨 <a href="#" id="potClear" style="color:#c98">지우기</a>`; bindPotClear(); }
+    showRefBtn(d.count>=4);
+    showPotMap(d.count>0);
+  }catch(e){}
+}
+// 지정된 화분 배치를 사이드 패널에 상시 표시 (어느 화분이 C3인지 확인용)
+function showPotMap(on){
+  const el=document.getElementById('potMap');
+  el.style.display=on?'block':'none';
+  if(on) renderPotMap(el,{onSlot:moveLeaf});
+}
+// 화분이 4개 이상 지정돼 있어야 '화분 기준 보정'을 쓸 수 있다
+function showRefBtn(on){
+  document.getElementById('refBtnWrap').style.display=on?'block':'none';
+  document.getElementById('refHint').style.display=on?'block':'none';
+}
+
+document.getElementById('multiFile').addEventListener('change',e=>{
+  const fs=[...e.target.files]; e.target.value='';
+  if(!fs.length)return;
+  if(fs.length<2){ scanStatus.textContent='⚠️ 2장 이상 골라 주세요 (1장이면 위의 탑뷰 스캔을 쓰세요)'; return; }
+  CAL.files=fs; CAL.i=0; CAL.quads=[]; CAL.regions=[];
+  calWrap.style.display='flex'; showCal();
+});
+
+// 'pot'(화분 자리만 지정)과 'potscan'(같은 사진으로 지정 후 바로 스캔)은
+// 모서리·화분 클릭 단계가 완전히 같다 — 마지막에 스캔까지 이어지느냐만 다르다.
+function isPotMode(){ return CAL.mode==='pot'||CAL.mode==='potscan'; }
+function showCal(){
+  CAL.pts=[]; CAL.pots=[]; CAL.refs=[]; CAL.pending=null; calNext.disabled=true;
+  document.getElementById('refPick').style.display='none';
+  const f=CAL.files[CAL.i];
+  document.getElementById('regionLbl').style.display=(CAL.mode==='multi')?'':'none';
+  calNext.textContent=isPotMode()?(CAL.mode==='potscan'?'저장 후 스캔':'저장'):(CAL.i===CAL.files.length-1?'완료':'다음 →');
+  document.getElementById('calTitle').textContent=
+    CAL.mode==='pot' ? '🪴 화분 자리 지정'
+    : CAL.mode==='potscan' ? '🪴📸 화분 지정 + 스캔'
+    : CAL.mode==='ref' ? `🎯 화분 기준 — 사진 ${CAL.i+1} / ${CAL.files.length}`
+    : `사진 ${CAL.i+1} / ${CAL.files.length} — ${f.name}`;
+  // 2장이면 좌/우, 3장 이상이면 전체를 기본값으로 (사용자가 바꿀 수 있음)
+  const sel=document.getElementById('calRegion');
+  sel.value=(CAL.files.length===2)?DEF_REGION[CAL.i+1]:'0,0,1,1';
+  if(CAL.url) URL.revokeObjectURL(CAL.url);
+  CAL.url=URL.createObjectURL(f);
+  calImg.onload=()=>{ calCv.width=calImg.clientWidth; calCv.height=calImg.clientHeight;
+    calCv.style.width=calImg.clientWidth+'px'; calCv.style.height=calImg.clientHeight+'px'; drawCal(); };
+  calImg.src=CAL.url;
+  updCalStep();
+}
+function updCalStep(){
+  const names=['좌상','우상','우하','좌하'];
+  const el=document.getElementById('calStep');
+  if(CAL.mode==='ref'){
+    el.textContent=CAL.refs.length<4
+      ? `아는 화분을 클릭하세요 — ${CAL.refs.length}/4 (많이 찍을수록 정확해집니다)`
+      : `기준점 ${CAL.refs.length}개 — 더 찍어도 되고, [${calNext.textContent}] 눌러도 됩니다`;
+    return;
+  }
+  if(CAL.pts.length<4){ el.textContent=`${CAL.pts.length+1}번째: ${names[CAL.pts.length]} 모서리`; return; }
+  el.textContent=isPotMode()
+    ? `이제 화분 중심을 하나씩 클릭 — 현재 ${CAL.pots.length}개 (빈 화분도 찍어 두면 나중에 심었을 때 바로 잡힙니다)`
+    : '네 점 완료 — [다음]을 누르세요';
+}
+function drawCal(){
+  const g=calCv.getContext('2d'); g.clearRect(0,0,calCv.width,calCv.height);
+  g.strokeStyle='#7ddb9a'; g.lineWidth=2; g.fillStyle='rgba(125,219,154,.16)';
+  if(CAL.pts.length>1){ g.beginPath(); g.moveTo(CAL.pts[0].dx,CAL.pts[0].dy);
+    CAL.pts.slice(1).forEach(p=>g.lineTo(p.dx,p.dy));
+    if(CAL.pts.length===4)g.closePath(); g.stroke(); if(CAL.pts.length===4)g.fill(); }
+  CAL.pts.forEach((p,i)=>{ g.fillStyle='#7ddb9a'; g.beginPath(); g.arc(p.dx,p.dy,7,0,7); g.fill();
+    g.fillStyle='#0e1512'; g.font='bold 11px sans-serif'; g.textAlign='center'; g.textBaseline='middle';
+    g.fillText(i+1,p.dx,p.dy); });
+  CAL.pots.forEach((p,i)=>{ g.fillStyle='#e8c96a'; g.beginPath(); g.arc(p.dx,p.dy,11,0,7); g.fill();
+    g.fillStyle='#2b2718'; g.font='bold 12px sans-serif'; g.textAlign='center'; g.textBaseline='middle';
+    g.fillText(i+1,p.dx,p.dy); });
+  CAL.refs.forEach(p=>{ g.fillStyle='#e8a64a'; g.beginPath(); g.arc(p.dx,p.dy,13,0,7); g.fill();
+    g.fillStyle='#2b2718'; g.font='bold 11px sans-serif'; g.textAlign='center'; g.textBaseline='middle';
+    g.fillText(p.label,p.dx,p.dy); });
+  if(CAL.pending){ g.strokeStyle='#e8a64a'; g.lineWidth=3; g.beginPath();
+    g.arc(CAL.pending.dx,CAL.pending.dy,13,0,7); g.stroke(); }
+}
+calCv.addEventListener('click',e=>{
+  const r=calCv.getBoundingClientRect();
+  const dx=e.clientX-r.left, dy=e.clientY-r.top;
+  // 화면 좌표 → 원본 픽셀 좌표 (백엔드는 원본 기준으로 받는다)
+  const sx=calImg.naturalWidth/calImg.clientWidth, sy=calImg.naturalHeight/calImg.clientHeight;
+  if(CAL.mode==='ref'){
+    // 찍은 지점이 어느 화분인지 묻는다 — 자리 이름만으론 못 고르니 지도를 보여준다
+    CAL.pending={dx,dy,x:dx*sx,y:dy*sy}; drawCal();
+    const used=new Set(CAL.refs.map(r=>r.i));
+    const left=CAL.potList.filter(p=>!used.has(p.i));
+    const sel=document.getElementById('refSel'); sel.innerHTML='';
+    left.forEach(p=>{ const o=document.createElement('option');
+      o.value=p.i; o.textContent='화분 '+p.slot; sel.appendChild(o); });
+    renderPotMap(document.getElementById('refMap'),{used,onPick:commitRef});
+    document.getElementById('refPick').style.display=left.length?'flex':'none';
+    return;
+  }
+  if(isPotMode()&&CAL.pts.length>=4){ CAL.pots.push({dx,dy,x:dx*sx,y:dy*sy});
+    drawCal(); updCalStep(); calNext.disabled=CAL.pots.length<1; return; }
+  if(CAL.pts.length>=4)return;
+  CAL.pts.push({dx,dy,x:dx*sx,y:dy*sy});
+  drawCal(); updCalStep();
+  calNext.disabled=isPotMode()?true:CAL.pts.length<4;
+});
+document.getElementById('calUndo').addEventListener('click',()=>{
+  CAL.pending=null; document.getElementById('refPick').style.display='none';
+  if(CAL.mode==='ref'){ CAL.refs.pop(); calNext.disabled=CAL.refs.length<4; }
+  else if(isPotMode()&&CAL.pots.length){ CAL.pots.pop(); calNext.disabled=!CAL.pots.length; }
+  else { CAL.pts=[]; CAL.pots=[]; calNext.disabled=true; }
+  drawCal(); updCalStep();
+});
+document.getElementById('calCancel').addEventListener('click',()=>{
+  calWrap.style.display='none'; if(CAL.url){URL.revokeObjectURL(CAL.url);CAL.url=null;} CAL.files=[];
+});
+calNext.addEventListener('click',async()=>{
+  if(CAL.mode==='ref'){
+    CAL.allRefs.push(CAL.refs.map(r=>[r.i,r.x,r.y]));
+    CAL.i++;
+    if(CAL.i<CAL.files.length){ showCal(); return; }
+    calWrap.style.display='none';
+    if(CAL.url){URL.revokeObjectURL(CAL.url);CAL.url=null;}
+    scanStatus.textContent=`분석 중… (화분 기준 보정 ${CAL.files.length}장)`;
+    const fd=new FormData();
+    CAL.files.forEach(f=>fd.append('files',f));
+    fd.append('pot_refs',JSON.stringify(CAL.allRefs));
+    fd.append('mode',document.getElementById('scanMode').value);
+    try{
+      const r=await fetch('/api/scan-multi',{method:'POST',body:fd});
+      if(!r.ok){const err=await r.json().catch(()=>({}));throw new Error(err.detail||'스캔 실패');}
+      const d=await r.json();
+      await loadAll();
+      scanStatus.textContent=scanMsg(d,`${d.photos}장 · 중복 ${d.deduped}개 제거`);
+    }catch(err){ scanStatus.textContent='⚠️ '+err.message; }
+    CAL.files=[]; CAL.mode='multi';
+    return;
+  }
+  if(isPotMode()){
+    const scanAfter=CAL.mode==='potscan', scanFile2=CAL.files[0];
+    calWrap.style.display='none';
+    if(CAL.url){URL.revokeObjectURL(CAL.url);CAL.url=null;}
+    const fd=new FormData();
+    fd.append('points_px',JSON.stringify(CAL.pots.map(p=>[p.x,p.y])));
+    fd.append('corners',JSON.stringify(CAL.pts.map(p=>[p.x,p.y])));
+    try{
+      const r=await fetch('/api/pots',{method:'POST',body:fd});
+      if(!r.ok){const e=await r.json().catch(()=>({}));throw new Error(e.detail||'화분 저장 실패');}
+      const d=await r.json();
+      CAL.potList=d.pots;
+      document.getElementById('potInfo').innerHTML=
+        `✅ 화분 ${d.count}개 지정됨${d.removed?` · 예전 자리 식물 ${d.removed}개 정리`:''} — 이제 스캔하면 이 자리로 갈립니다 <a href="#" id="potClear" style="color:#c98">지우기</a>`;
+      bindPotClear(); showRefBtn(d.count>=4); showPotMap(true);
+
+      // 화분 지정 + 스캔: 두 번째 사진 없이, 방금 그 사진으로 바로 이어서 스캔한다
+      if(scanAfter){
+        scanStatus.textContent='분석 중… (화분 지정 + 스캔)';
+        const sfd=new FormData(); sfd.append('file',scanFile2);
+        sfd.append('mode',document.getElementById('scanMode').value);
+        const sr=await fetch('/api/scan',{method:'POST',body:sfd});
+        if(!sr.ok){const se=await sr.json().catch(()=>({}));throw new Error(se.detail||'스캔 실패');}
+        const sd=await sr.json();
+        await loadAll();
+        const how=({pot_preset:'지정한 화분자리',canopy:'캐노피',pot:'화분+생김새'})[sd.grouped_by]||'거리+생김새';
+        scanStatus.textContent=scanMsg(sd,how);
+      }
+    }catch(e){
+      if(scanAfter) scanStatus.textContent='⚠️ '+e.message;
+      else document.getElementById('potInfo').textContent='⚠️ '+e.message;
+    }
+    CAL.files=[]; CAL.mode='multi';
+    return;
+  }
+  CAL.quads.push(CAL.pts.map(p=>[p.x,p.y]));
+  CAL.regions.push(document.getElementById('calRegion').value.split(',').map(Number));
+  CAL.i++;
+  if(CAL.i<CAL.files.length){ showCal(); return; }
+  calWrap.style.display='none';
+  if(CAL.url){URL.revokeObjectURL(CAL.url);CAL.url=null;}
+  scanStatus.textContent=`분석 중… (${CAL.files.length}장 원근 보정 + 합치기)`;
+  const fd=new FormData();
+  CAL.files.forEach(f=>fd.append('files',f));
+  fd.append('corners',JSON.stringify(CAL.quads));
+  fd.append('regions',JSON.stringify(CAL.regions));
+  fd.append('mode',document.getElementById('scanMode').value);
+  try{
+    const r=await fetch('/api/scan-multi',{method:'POST',body:fd});
+    if(!r.ok){const err=await r.json().catch(()=>({}));throw new Error(err.detail||'스캔 실패');}
+    const d=await r.json();
+    await loadAll();
+    scanStatus.textContent=scanMsg(d,`${d.photos}장 · 중복 ${d.deduped}개 제거`);
+  }catch(err){ scanStatus.textContent='⚠️ '+err.message; }
+  CAL.files=[];
+});
+
+// ===== 제거 =====
+async function delPlant(id){
+  try{ await fetch('/api/plants/'+id,{method:'DELETE'}); }catch(e){}
+  removeObj(id); refreshList(); refreshSlots();
+  if(modalId===id) closeModal();
+}
+
+// ===== 클릭 → 모달 =====
+let downX,downY;
+renderer.domElement.addEventListener('pointerdown',e=>{downX=e.clientX;downY=e.clientY;});
+renderer.domElement.addEventListener('pointerup',e=>{
+  if(Math.hypot(e.clientX-downX,e.clientY-downY)>5)return;
+  ptr.x=(e.clientX/innerWidth)*2-1; ptr.y=-(e.clientY/innerHeight)*2+1; ray.setFromCamera(ptr,camera);
+  const hits=ray.intersectObjects(Object.values(objs).map(o=>o.group),true);
+  for(const h of hits){const id=h.object.userData.pid; if(id&&objs[id]){openModal(objs[id].data);break;}}
+});
+
+// ===== 모달 =====
+let modalId=null;
+function openModal(p){
+  modalId=p.id;
+  document.getElementById('mPos').textContent=p.pos||'';
+  document.getElementById('mName').value=p.name;
+  const t=document.getElementById('mThumb'); t.src=p.thumb||''; t.style.display=p.thumb?'block':'none';
+  document.getElementById('mTopSize').textContent=p.top_leaf_size||'–';
+  document.getElementById('mTopPct').textContent=(p.top_leaf_pct?('· 화면의 '+p.top_leaf_pct+'%'):'');
+  const sz=document.getElementById('mSize');
+  sz.textContent=p.size_class+(p.canopy_cm?` · 포기 ${p.canopy_cm}cm`:(p.leaf_max_cm?` · 잎 ${p.leaf_max_cm}cm`:''));
+  sz.style.background=(p.size_class==='미검출')?'#7a5c22':'#2e7d32';
+  document.getElementById('mManual').style.display=p.manual?'inline-block':'none';
+  [...document.querySelectorAll('#mSizePick button')].forEach(b=>
+    b.setAttribute('aria-pressed', b.dataset.sz===p.size_class ? 'true':'false'));
+  const sh=document.getElementById('mShape');
+  if(p.shape_group){ sh.style.display='inline-block'; sh.style.background=shapeColor(p.shape_group);
+    sh.textContent='모양 '+p.shape_group+(p.shape_group_size>1?` · 같은 모양 ${p.shape_group_size}개`:' · 단독'); }
+  else sh.style.display='none';
+  document.getElementById('mShootN').textContent=(p.shoot_count!=null?p.shoot_count:'–');
+  document.getElementById('mMatN').textContent=(p.mature_count!=null?p.mature_count:'–');
+  document.getElementById('mOldN').textContent=(p.old_count!=null?p.old_count:'–');
+  document.getElementById('mLeaf').textContent=p.leaf_count;
+  document.getElementById('mDen').textContent=p.overlap_density+'%';
+  document.getElementById('mUpd').textContent=
+    (p.size_class==='미검출'?'이 화분은 잎이 잡히지 않았어요 — 아래에서 직접 넣어 주세요 · ':'')
+    + (p.updated?('최근 분석: '+p.updated):'');
+  const rv=p.rot||0; document.getElementById('mRot').value=rv; document.getElementById('mRotV').textContent=rv+'°';
+  const wi=document.getElementById('mWaterInfo');
+  if(p.days_since_watered==null) wi.innerHTML='기록 없음';
+  else wi.innerHTML=`물 준 지 <b style="color:${p.soil_dry?'#e8a64a':'#7ddb9a'}">${p.days_since_watered}일째</b>`
+    +(p.soil_dry?' · ⚠️ 흙 마름 위험':'');
+  document.getElementById('mMoveInfo').textContent='';
+  populateMoveSelect(p);
+  document.getElementById('mNote').value=p.note||'';
+  document.getElementById('mNoteInfo').textContent='';
+  document.getElementById('mWrap').style.display='flex';
+}
+// 메모 — 자동 판정과 무관한 자유 기록. 칸을 벗어나면(blur) 저장한다
+document.getElementById('mNote').addEventListener('change',async()=>{
+  if(!modalId)return;
+  const info=document.getElementById('mNoteInfo');
+  const fd=new FormData(); fd.append('note',document.getElementById('mNote').value);
+  const r=await fetch('/api/plants/'+modalId,{method:'PATCH',body:fd});
+  if(!r.ok){ info.textContent='⚠️ 저장 실패'; return; }
+  const p=await r.json();
+  objs[modalId].data=p; refreshList();
+  info.textContent='✅ 저장됨';
+});
+// 물 주기 — 센서가 없으니 사람이 준 날짜만 기록하고, 며칠 지났는지로 마름 위험을 보여준다
+document.getElementById('mWaterBtn').addEventListener('click',async()=>{
+  if(!modalId)return;
+  const r=await fetch('/api/plants/'+modalId+'/water',{method:'POST'});
+  if(!r.ok)return;
+  const p=await r.json();
+  objs[modalId].data=p; rebuildObj(p); refreshList();
+  openModal(p);
+});
+// 전체 화분 물주기 — 모달을 하나씩 열지 않고 트레이 전체를 한 번에 기록
+document.getElementById('waterAllBtn').addEventListener('click',async()=>{
+  const info=document.getElementById('waterAllInfo');
+  info.textContent='기록 중…';
+  const r=await fetch('/api/water-all',{method:'POST'});
+  if(!r.ok){ info.textContent='⚠️ 실패'; return; }
+  const res=await r.json();
+  info.textContent=res.watered?`✅ 화분 ${res.watered}개에 오늘 날짜로 기록했어요`:'등록된 화분이 없어요';
+  await loadAll();
+  if(document.getElementById('waterCalWrap').style.display==='flex') renderWaterCal();
+});
+
+// ===== 물주기 달력 =====
+// 매번 언제 물을 줬는지 잊어버리니, 하루에 몇 화분 줬는지 달로 훑어볼 수 있게 한다.
+const now0=new Date();
+const WCAL={y:now0.getFullYear(), m:now0.getMonth()+1, sel:null};   // m 은 1~12, sel 은 고른 날짜
+async function renderWaterCal(){
+  const mm=String(WCAL.m).padStart(2,'0');
+  document.getElementById('waterCalTitle').textContent=`${WCAL.y}년 ${WCAL.m}월`;
+  document.getElementById('waterCalInfo').textContent='';
+  let data={days:[]};
+  try{ data=await(await fetch(`/api/water-log?month=${WCAL.y}-${mm}`)).json(); }catch(e){}
+  const counts=Object.fromEntries(data.days.map(d=>[d.date,d.count]));
+  const grid=document.getElementById('waterCalGrid'); grid.innerHTML='';
+  ['일','월','화','수','목','금','토'].forEach(d=>{
+    const h=document.createElement('div'); h.textContent=d;
+    h.style.cssText='text-align:center;color:#6f8073;font-weight:700;padding-bottom:4px';
+    grid.appendChild(h);
+  });
+  const startDow=new Date(WCAL.y,WCAL.m-1,1).getDay();
+  const daysInMonth=new Date(WCAL.y,WCAL.m,0).getDate();
+  const todayStr=localToday();
+  for(let i=0;i<startDow;i++) grid.appendChild(document.createElement('div'));
+  for(let d=1; d<=daysInMonth; d++){
+    const dateStr=`${WCAL.y}-${mm}-${String(d).padStart(2,'0')}`;
+    const cnt=counts[dateStr]||0;
+    const future=dateStr>todayStr;          // 아직 안 준 물은 적을 수 없다
+    const picked=dateStr===WCAL.sel;
+    const cell=document.createElement('div');
+    cell.style.cssText=`text-align:center;padding:5px 2px;border-radius:6px;
+      cursor:${future?'not-allowed':'pointer'};opacity:${future?.35:1};
+      background:${picked?'#2a5238':(cnt?'#1d3324':'#14201a')};
+      border:1px solid ${picked?'#7ddb9a':(dateStr===todayStr?'#7ddb9a':'rgba(120,180,140,.15)')};
+      color:#e8f0ea`;
+    cell.innerHTML=`<div>${d}</div>`+(cnt?`<div style="font-size:9px;color:#7ddb9a">💧${cnt}</div>`:'');
+    if(!future) cell.addEventListener('click',()=>{ WCAL.sel=dateStr; renderWaterCal(); });
+    grid.appendChild(cell);
+  }
+  drawWaterCalActions(counts);
+}
+
+// 날짜를 고르면 그날로 물주기를 남기거나 되돌릴 수 있다.
+// 물은 줬는데 앱을 안 켠 날이 생기므로, 오늘만 기록되면 달력이 비어 버린다.
+function drawWaterCalActions(counts){
+  const info=document.getElementById('waterCalInfo');
+  info.innerHTML='';
+  if(!WCAL.sel){
+    info.textContent='날짜를 누르면 그날로 물 준 기록을 남기거나 지울 수 있어요.';
+    return;
+  }
+  const cnt=counts[WCAL.sel]||0;
+  const label=document.createElement('div');
+  label.style.cssText='margin-bottom:6px';
+  label.textContent=cnt?`${WCAL.sel} — 화분 ${cnt}개에 물을 줬어요`
+                       :`${WCAL.sel} — 물 준 기록이 없어요`;
+  info.appendChild(label);
+
+  const row=document.createElement('div');
+  row.style.cssText='display:flex;gap:6px;flex-wrap:wrap';
+  const mk=(text,handler,danger)=>{
+    const b=document.createElement('button');
+    b.type='button'; b.textContent=text;
+    b.style.cssText=`padding:5px 10px;border-radius:6px;cursor:pointer;font-size:11px;
+      border:1px solid ${danger?'#7a3b3b':'#3d6b4a'};background:${danger?'#2a1a1a':'#1d3324'};color:#e8f0ea`;
+    b.addEventListener('click',()=>handler(b));
+    return b;
+  };
+  row.appendChild(mk('💧 이 날짜로 전체 물주기 기록', async(b)=>{
+    b.disabled=true; label.textContent='기록 중…';
+    const fd=new FormData(); fd.append('day',WCAL.sel);
+    const r=await fetch('/api/water-all',{method:'POST',body:fd});
+    if(!r.ok){ label.textContent='⚠️ '+((await r.json().catch(()=>({}))).detail||'실패'); b.disabled=false; return; }
+    await loadAll(); renderWaterCal();
+  }));
+  if(cnt) row.appendChild(mk('🗑 이 날 기록 지우기', async(b)=>{
+    b.disabled=true; label.textContent='지우는 중…';
+    const r=await fetch(`/api/water-all?day=${WCAL.sel}`,{method:'DELETE'});
+    if(!r.ok){ label.textContent='⚠️ 실패'; b.disabled=false; return; }
+    await loadAll(); renderWaterCal();
+  }, true));
+  info.appendChild(row);
+}
+
+// toISOString 은 UTC 라 한국 시간 아침엔 하루 전 날짜가 나온다.
+function localToday(){
+  const n=new Date();
+  return `${n.getFullYear()}-${String(n.getMonth()+1).padStart(2,'0')}-${String(n.getDate()).padStart(2,'0')}`;
+}
+document.getElementById('waterCalPrev').addEventListener('click',()=>{
+  WCAL.m--; if(WCAL.m<1){WCAL.m=12;WCAL.y--;} WCAL.sel=null; renderWaterCal();
+});
+document.getElementById('waterCalNext').addEventListener('click',()=>{
+  WCAL.m++; if(WCAL.m>12){WCAL.m=1;WCAL.y++;} WCAL.sel=null; renderWaterCal();
+});
+document.getElementById('waterCalClose').addEventListener('click',()=>{
+  document.getElementById('waterCalWrap').style.display='none';
+});
+document.getElementById('waterCalBtn').addEventListener('click',()=>{
+  const n=new Date(); WCAL.y=n.getFullYear(); WCAL.m=n.getMonth()+1; WCAL.sel=localToday();
+  document.getElementById('waterCalWrap').style.display='flex';
+  renderWaterCal();
+});
+
+// 자리 이동 — 자동 배치(스캔·화분 최근접)가 틀렸을 때 손으로 옮긴다.
+// 목적지에 이미 식물이 있으면 서버가 자동으로 서로 자리를 맞바꾼다.
+async function populateMoveSelect(p){
+  const sel=document.getElementById('mMoveSel');
+  let slots; try{ slots=await(await fetch('/api/slots')).json(); }catch(e){ return; }
+  sel.innerHTML='';
+  slots.forEach(s=>{
+    const o=document.createElement('option'); o.value=s.label;
+    const occupant=(s.occupied&&objs[s.plant_id]&&s.plant_id!==p.id)?objs[s.plant_id].data.name:null;
+    o.textContent=s.label+(s.label===p.pos?' (현재 자리)':occupant?` — ${occupant} 와 맞바꿈`:' — 빈 자리');
+    if(s.label===p.pos) o.selected=true;
+    sel.appendChild(o);
+  });
+}
+document.getElementById('mMoveBtn').addEventListener('click',async()=>{
+  if(!modalId)return;
+  const target=document.getElementById('mMoveSel').value;
+  const info=document.getElementById('mMoveInfo');
+  if(!target||target===objs[modalId].data.pos){ info.textContent='이미 그 자리예요'; return; }
+  info.textContent='이동 중…';
+  const fd=new FormData(); fd.append('pos',target);
+  const r=await fetch('/api/plants/'+modalId+'/move',{method:'PATCH',body:fd});
+  if(!r.ok){ const e=await r.json().catch(()=>({})); info.textContent='⚠️ '+(e.detail||'이동 실패'); return; }
+  const res=await r.json();
+  await loadAll();
+  openModal(res.plant);      // openModal 이 mMoveInfo 를 비우니, 메시지는 그 뒤에 넣는다
+  document.getElementById('mMoveInfo').textContent=res.swapped_with
+    ?`✅ ${res.swapped_with.name}(${res.swapped_with.pos}) 와 자리를 맞바꿨어요`:'✅ 이동했어요';
+});
+// 화분 방향 회전
+const mRot=document.getElementById('mRot'),mRotV=document.getElementById('mRotV');
+mRot.addEventListener('input',()=>{
+  mRotV.textContent=mRot.value+'°';
+  if(modalId&&objs[modalId]){ objs[modalId].group.rotation.y=(+mRot.value)*Math.PI/180; objs[modalId].data.rot=+mRot.value; }
+});
+mRot.addEventListener('change',async()=>{
+  if(!modalId)return; const fd=new FormData(); fd.append('rot',mRot.value);
+  try{ await fetch('/api/plants/'+modalId,{method:'PATCH',body:fd}); }catch(e){}
+});
+// ===== 직접 수정 (사진이 뭉개지거나 잎이 가려져 탐지가 틀렸을 때) =====
+async function patchPlant(fields){
+  if(!modalId)return;
+  const fd=new FormData();
+  Object.entries(fields).forEach(([k,v])=>fd.append(k,v));
+  const r=await fetch('/api/plants/'+modalId,{method:'PATCH',body:fd});
+  if(!r.ok){const e=await r.json().catch(()=>({}));
+    document.getElementById('mUpd').textContent='⚠️ '+(e.detail||'수정 실패'); return;}
+  const p=await r.json();
+  objs[p.id].data=p; rebuildObj(p); refreshList(); refreshSlots(); openModal(p);
+}
+// 크기 등급
+document.querySelectorAll('#mSizePick button').forEach(b=>
+  b.addEventListener('click',()=>patchPlant({size_class:b.dataset.sz})));
+// 잎 −/+ (성엽 −1 · 노엽 +1 로 단계 이동)
+document.querySelectorAll('.cnt button').forEach(b=>b.addEventListener('click',()=>{
+  if(!modalId)return;
+  const p=objs[modalId].data, key=b.dataset.st+'_count';
+  const next=Math.max(0,(p[key]||0)+(+b.dataset.d));
+  patchPlant({[key]:next});
+}));
+
+function closeModal(){document.getElementById('mWrap').style.display='none';modalId=null;}
+document.getElementById('mClose').addEventListener('click',closeModal);
+document.getElementById('mWrap').addEventListener('click',e=>{if(e.target.id==='mWrap')closeModal();});
+document.getElementById('mDel').addEventListener('click',()=>{if(modalId)delPlant(modalId);});
+
+// 이름 저장(수정)
+document.getElementById('mName').addEventListener('change',async()=>{
+  if(!modalId)return; const nm=document.getElementById('mName').value.trim(); if(!nm)return;
+  const fd=new FormData(); fd.append('name',nm);
+  const r=await fetch('/api/plants/'+modalId,{method:'PATCH',body:fd}); const p=await r.json();
+  objs[modalId].data=p; rebuildObj(p); refreshList(); refreshSlots();
+});
+// 새 사진으로 갱신
+document.getElementById('mReFile').addEventListener('change',async(e)=>{
+  if(!modalId||!e.target.files[0])return;
+  const fd=new FormData(); fd.append('file',e.target.files[0]);
+  const r=await fetch('/api/plants/'+modalId+'/reanalyze',{method:'POST',body:fd});
+  if(r.ok){const p=await r.json(); objs[modalId].data=p; rebuildObj(p); refreshList(); openModal(p);}
+  e.target.value='';
+});
+
+addEventListener('resize',()=>{camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight);});
+(function loop(){requestAnimationFrame(loop);controls.update();renderer.render(scene,camera);})();
+loadEnvironment(); loadPots().then(loadLeaves); loadAll();
+</script>
+</body>
+</html>
