@@ -466,19 +466,50 @@ def test_no_record_means_no_dry_warning():
     _reset()
 
 
+# 마름 판정은 이제 계절 프로필을 본다(여름 3일, 겨울 8일). 아래 두 테스트는
+# '기준을 하루 넘기면 마른다' 는 규칙 자체를 보는 것이라, 프로필을 비워서
+# 계절을 고정한다. 안 그러면 8월에는 통과하고 12월에는 깨진다.
+import watering                                                    # noqa: E402
+
+
+def _without_profile(fn):
+    old = watering.PROFILE
+    watering.PROFILE = {}
+    try:
+        fn()
+    finally:
+        watering.PROFILE = old
+
+
 def test_soil_stays_fine_through_day_three():
     """기준(WATER_DRY_DAYS=3)까지는 물기가 있다고 본다."""
-    p = _plant(last_watered=(date.today() - timedelta(days=main.WATER_DRY_DAYS)).isoformat())
-    main._augment_water(p)
-    assert p["days_since_watered"] == main.WATER_DRY_DAYS
-    assert p["soil_dry"] is False
+    def body():
+        p = _plant(last_watered=(date.today() - timedelta(days=main.WATER_DRY_DAYS)).isoformat())
+        main._augment_water(p)
+        assert p["days_since_watered"] == main.WATER_DRY_DAYS
+        assert p["soil_dry"] is False
+    _without_profile(body)
     _reset()
 
 
 def test_soil_turns_dry_the_day_after_the_threshold():
-    p = _plant(last_watered=(date.today() - timedelta(days=main.WATER_DRY_DAYS + 1)).isoformat())
-    main._augment_water(p)
-    assert p["soil_dry"] is True
+    def body():
+        p = _plant(last_watered=(date.today() - timedelta(days=main.WATER_DRY_DAYS + 1)).isoformat())
+        main._augment_water(p)
+        assert p["soil_dry"] is True
+    _without_profile(body)
+    _reset()
+
+
+def test_winter_gives_a_pot_more_time_than_summer():
+    """습생·거실 프로필 — 겨울엔 천천히 마르니 같은 날수로 마름 판정이 나면 안 된다."""
+    from datetime import date as _d
+    p = {"water_log": [], "last_watered": (_d(2026, 1, 10)).isoformat()}
+    winter = watering.recommend(p, _d(2026, 1, 15), watering.DEFAULT_PROFILE)
+    p2 = {"water_log": [], "last_watered": (_d(2026, 7, 10)).isoformat()}
+    summer = watering.recommend(p2, _d(2026, 7, 15), watering.DEFAULT_PROFILE)
+    assert winter["overdue"] is False, winter      # 5일째 — 겨울엔 아직 이르다
+    assert summer["overdue"] is True, summer       # 5일째 — 여름엔 이미 넘겼다
     _reset()
 
 

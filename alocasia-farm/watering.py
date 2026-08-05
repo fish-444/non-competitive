@@ -36,8 +36,27 @@ PRIOR_STRENGTH = float(os.environ.get("WATER_PRIOR", "3"))
 FALLBACK_DAYS = float(os.environ.get("WATER_FALLBACK_DAYS",
                                      os.environ.get("WATER_DRY_DAYS", "3")))
 
-# 외부 자료로 만든 프로필 파일. 없으면 FALLBACK_DAYS 로 돈다.
+# 외부 자료로 만든 프로필 파일. 없으면 DEFAULT_PROFILE 로 돈다.
 PROFILE_PATH = os.environ.get("WATER_PROFILE", "water_profile.json")
+
+# 알로카시아는 **습생(수분을 좋아하는 무리)** 이고, 두는 곳은 **거실** 기준이다.
+# 베란다는 바깥 기온·바람을 그대로 받아 훨씬 빨리 마르므로 값이 다르다.
+#
+# ⚠ 아래 달별 값은 원예 통념에서 잡은 **잠정값**이지 데이터셋에서 뽑은 수치가
+#   아니다. AI Hub '원예식물(화분류) 물주기 생육 데이터' 에서 습생·거실 조건의
+#   실제 관수 간격을 계산해 water_profile.json 으로 덮어쓰면 이 값은 안 쓰인다.
+#   어차피 기록이 몇 번 쌓이면 형의 실제 리듬 쪽으로 옮겨가므로(blended_interval),
+#   이 값이 정확하지 않아도 시간이 지나면 영향이 사라진다.
+DEFAULT_PROFILE = {
+    "source": "잠정값 (습생·거실)",
+    "provisional": True,
+    "group": "습생",
+    "place": "거실",
+    "base_interval_days": 5,
+    # 여름엔 빨리 마르고 자라느라 물을 더 쓴다. 겨울엔 생장이 멎어 훨씬 천천히 마른다.
+    "by_month": {"1": 8, "2": 8, "3": 6, "4": 5, "5": 4, "6": 3,
+                 "7": 3, "8": 3, "9": 4, "10": 5, "11": 6, "12": 8},
+}
 
 # 사람이 준 간격이라 해도 이 범위를 벗어나면 오타나 몰아서 적은 기록으로 본다.
 MIN_INTERVAL, MAX_INTERVAL = 1.0, 30.0
@@ -59,8 +78,8 @@ def _load_profile() -> dict:
         with open(PROFILE_PATH, encoding="utf-8") as f:
             data = json.load(f)
     except (OSError, ValueError):
-        return {}
-    return data if isinstance(data, dict) else {}
+        return dict(DEFAULT_PROFILE)
+    return data if isinstance(data, dict) else dict(DEFAULT_PROFILE)
 
 
 PROFILE = _load_profile()

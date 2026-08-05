@@ -98,6 +98,28 @@ def test_two_plants_due_the_same_day_are_counted_together():
     assert due == {"2026-08-10": 2}, due
 
 
+def test_the_default_profile_is_the_wet_group_in_a_living_room():
+    """알로카시아는 습생이고 두는 곳은 거실 — 베란다는 훨씬 빨리 마른다."""
+    d = watering.DEFAULT_PROFILE
+    assert d["group"] == "습생" and d["place"] == "거실", d
+    assert d["provisional"] is True, "데이터셋에서 뽑기 전까지는 잠정값임을 표시해 둔다"
+
+
+def test_the_default_profile_waters_more_often_in_summer():
+    summer = watering.profile_interval(date(2026, 7, 15), watering.DEFAULT_PROFILE)
+    winter = watering.profile_interval(date(2026, 1, 15), watering.DEFAULT_PROFILE)
+    assert summer < winter, (summer, winter)
+    assert all(watering.MIN_INTERVAL <= watering.profile_interval(date(2026, m, 15),
+                                                                 watering.DEFAULT_PROFILE)
+               <= watering.MAX_INTERVAL for m in range(1, 13))
+
+
+def test_a_profile_file_wins_over_the_built_in_default():
+    """데이터셋으로 만든 water_profile.json 을 넣으면 잠정값은 안 쓰인다."""
+    got = watering.profile_interval(date(2026, 1, 15), {"base_interval_days": 2})
+    assert got == 2, got
+
+
 def test_an_absurd_interval_never_reaches_the_calendar():
     """프로필이 잘못 적혀도 몇 달 뒤 같은 날짜가 나오면 안 된다."""
     r = watering.recommend(plant(["2026-08-07"]), date(2026, 8, 8),
