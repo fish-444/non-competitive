@@ -14,3 +14,8 @@ farm_env*
 # capture_boxes.py 가 만드는 정확도 측정 자료.
 # 사진마다 크기가 크고 사람마다 다른 사진을 쓰므로 각자 로컬에만 둔다.
 bench_data/
+
+# make_water_profile.py 가 만드는 관수 프로필.
+# 각자 받은 데이터셋에서 계산한 값이라 로컬에 둔다.
+# 없으면 watering.DEFAULT_PROFILE(잠정값)로 돈다.
+water_profile.json
