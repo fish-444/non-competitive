@@ -4,12 +4,12 @@ title 알로카시아 스마트팜
 cd /d "%~dp0"
 
 rem 로보플로우 키는 farm_env.bat 에 따로 둡니다 (깃에 안 올라감).
-rem farm_env.example.bat 를 farm_env.bat 로 복사해 키를 채우세요.
+rem 설정은 farm_env.bat 에 있습니다. 없으면 서버가 켜질 때 만들어 줍니다.
 if exist "farm_env.bat" (
     call "farm_env.bat"
 ) else (
-    echo [알림] farm_env.bat 가 없어 데모 모드로 켭니다.
-    echo        farm_env.example.bat 를 farm_env.bat 로 복사해 키를 넣으면
+    echo [알림] farm_env.bat 가 없습니다 - 서버가 켜지면서 만들어 줍니다.
+    echo        그 파일의 ROBOFLOW_API_KEY 에 키를 넣고 다시 켜면
     echo        로보플로우로 실제 분석합니다.
     echo.
 )

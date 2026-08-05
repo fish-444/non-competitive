@@ -119,11 +119,10 @@ https://app.roboflow.com/{워크스페이스}/settings/api
 [분석 엔진] workflow · find-old-leaf-and-others
 ```
 
-#### 자주 나는 실수 4가지
+#### 자주 나는 실수 3가지
 
 | 실수 | 증상 |
 |---|---|
-| `farm_env.example.bat`(견본)을 대신 고침 | 앱은 그 파일을 안 읽습니다 → `[키] 없음`, 데모 모드 |
 | 파워셸 습관대로 `set KEY="값"` | 배치는 **따옴표까지 키 값**으로 씁니다 |
 | 붙여넣을 때 줄 끝 공백이 딸려옴 | 401 |
 | 폐기한 옛 키를 다시 넣음 | `This API key does not exist (or has been revoked)` |
@@ -136,7 +135,7 @@ https://app.roboflow.com/{워크스페이스}/settings/api
 ### 설치 없이 그때그때 켜기
 `install.bat` 없이 **`start.bat` 더블클릭**만 해도 됩니다. 서버가 뜨고 브라우저가
 바로 열립니다. 대신 컴퓨터를 켤 때마다 직접 눌러 주셔야 합니다.
-이 경우 `farm_env.example.bat` 를 `farm_env.bat` 로 직접 복사하고 키를 넣으세요.
+`farm_env.bat` 이 없으면 서버가 켜지면서 만들어 주니, 거기에 키만 넣고 다시 켜세요.
 
 끌 때는 검은 창에서 `Ctrl+C` 또는 창 닫기.
 **창을 닫으면 웹페이지는 멈추지만, 식물 정보는 `farm.db` 에 남습니다.**

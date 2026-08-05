@@ -50,7 +50,10 @@ set NEEDKEY=
 if exist "farm_env.bat" (
     echo [3/4] farm_env.bat 이미 있음 - 그대로 둡니다.
 ) else (
-    copy /y "farm_env.example.bat" "farm_env.bat" >nul
+    rem 견본 파일을 두지 않는다. 앱이 자기 설정 파일을 직접 만든다 - 견본은
+    rem 늘 둘 중 어느 쪽을 고쳐야 하는지 헷갈리게 했고, 거기 키를 적어
+    rem 공개 저장소에 올리는 사고까지 났다.
+    python -c "import main" >nul 2>&1
     set NEEDKEY=1
     echo [3/4] farm_env.bat 를 만들었습니다.
 )

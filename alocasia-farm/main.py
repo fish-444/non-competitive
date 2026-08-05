@@ -47,8 +47,67 @@ from PIL import Image
 
 import placement
 import providers
+import watering
 
 # --------------------------------------------------------------------------- 설정
+# 설정 파일 견본. 예전에는 farm_env.example.bat 을 저장소에 두고 "복사해서 이름을
+# 바꾸라"고 안내했는데, 그 두 단계에서 사고가 반복됐다 — 견본 쪽을 고쳐 놓고 왜
+# 키가 안 잡히냐고 하거나, 견본에 키를 적어 공개 저장소에 올리거나.
+# 그래서 견본 파일을 없애고 앱이 farm_env.bat 을 직접 만든다. 이 파일은
+# .gitignore 가 막고 있어서 키를 적어도 깃에 안 올라간다.
+_ENV_TEMPLATE = """\
+@echo off
+rem 알로카시아 스마트팜 설정
+rem 이 파일은 깃에 올라가지 않습니다 — 키를 여기 적으셔도 안전합니다.
+rem 고친 뒤에는 서버를 껐다 켜야 반영됩니다.
+
+rem 로보플로우 Private API Key 를 = 뒤에 따옴표 없이 붙여넣으세요.
+rem (rf_ 로 시작하는 공개키는 막힙니다)
+set ROBOFLOW_API_KEY=
+
+rem 어떤 모델로 볼지 — 그대로 두세요
+set ROBOFLOW_WORKSPACE=s-workspace-br86f
+set ROBOFLOW_WORKFLOW_ID=find-old-leaf-and-others
+
+rem 서버 포트
+set FARM_PORT=8123
+
+rem 카메라 높이(cm). 트레이 바닥에서 렌즈까지 재서 넣으세요.
+rem 넣으면 '가운데는 크게, 구석은 작게' 재던 것을 자리별로 되돌립니다.
+rem set CAM_HEIGHT_CM=50
+rem set LEAF_HEIGHT_CM=18
+
+rem 탐지 민감도 (낮출수록 잎을 더 많이 잡음, 기본 25)
+rem set CONFIDENCE=15
+
+rem 저장 파일 위치 (기본: 이 폴더의 farm.db)
+rem set FARM_DB=D:\\백업\\farm.db
+"""
+
+
+def _ensure_env_file() -> None:
+    """설정 파일이 없으면 만들어 둔다. 있으면 절대 안 건드린다(키가 지워지면 안 된다).
+
+    맥·리눅스는 set 대신 export 를 쓰므로 문법만 바꿔서 farm_env.sh 로 만든다.
+    """
+    posix = os.name != "nt"
+    name = "farm_env.sh" if posix else "farm_env.bat"
+    path = os.path.join(os.getcwd(), name)
+    if os.path.exists(path) or os.path.exists(os.path.join(os.getcwd(), "farm_env.bat")):
+        return
+    body = _ENV_TEMPLATE
+    if posix:
+        body = (body.replace("@echo off", "#!/bin/sh")
+                    .replace("\nrem ", "\n# ").replace("\nset ", "\nexport "))
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(body)
+    except OSError:
+        return
+    print(f"[설정] {name} 을 만들었습니다 — 여기에 로보플로우 키를 넣으세요.")
+    print(f"[설정]   {path}")
+
+
 def _load_env_file() -> None:
     """farm_env.bat / farm_env.sh 를 앱이 직접 읽어 환경변수로 올린다.
 
@@ -86,6 +145,7 @@ def _load_env_file() -> None:
         return
 
 
+_ensure_env_file()
 _load_env_file()
 
 
@@ -99,35 +159,37 @@ def _report_env_file() -> None:
     uvicorn 을 직접 띄운 경우다.
     """
     here = os.getcwd()
-    env_file = os.path.join(here, "farm_env.bat")
+    # _ensure_env_file 이 만드는 이름과 같아야 한다. 맥·리눅스에서 farm_env.bat 을
+    # 찾으면 방금 만든 farm_env.sh 를 두고 "없습니다" 라고 하게 된다.
+    name = next((n for n in ("farm_env.bat", "farm_env.sh")
+                 if os.path.exists(os.path.join(here, n))),
+                "farm_env.sh" if os.name != "nt" else "farm_env.bat")
+    env_file = os.path.join(here, name)
     has_env = bool(os.environ.get("ROBOFLOW_API_KEY", "").strip())
 
     if not os.path.exists(env_file):
-        print(f"[설정] farm_env.bat 이 없습니다 — {here}")
-        print("[설정]   farm_env.example.bat 을 farm_env.bat 으로 복사하고 키를 넣으세요.")
-        print("[설정]   (메모장 '다른 이름으로 저장' 은 farm_env.bat.txt 를 만들기 쉽습니다. "
-              "파일 형식을 '모든 파일' 로 두세요)")
+        print(f"[설정] {name} 을 만들지 못했습니다 — {here} 의 쓰기 권한을 확인하세요.")
         return
 
     in_file = ""
     try:
         with open(env_file, encoding="utf-8", errors="replace") as f:
             for line in f:
-                m = re.match(r"\s*set\s+ROBOFLOW_API_KEY\s*=(.*)", line, re.I)
+                m = re.match(r"\s*(?:set|export)\s+ROBOFLOW_API_KEY\s*=(.*)", line, re.I)
                 if m:
                     in_file = m.group(1).strip()
     except OSError as e:
-        print(f"[설정] farm_env.bat 을 읽을 수 없습니다: {e}")
+        print(f"[설정] {name} 을 읽을 수 없습니다: {e}")
         return
 
     if has_env:
         return                                   # 정상 — [키] 줄이 이미 알려 준다
     if not in_file:
-        print(f"[설정] farm_env.bat 에 키가 비어 있습니다 — {env_file}")
+        print(f"[설정] {name} 에 키가 비어 있습니다 — {env_file}")
         print("[설정]   set ROBOFLOW_API_KEY=... 줄에 Private API Key 를 넣으세요.")
     else:
         # 여기가 핵심 — 파일엔 있는데 앱까지 안 왔다
-        print(f"[설정] farm_env.bat 에는 키가 있는데({in_file[:4]}…) 앱까지 오지 않았습니다.")
+        print(f"[설정] {name} 에는 키가 있는데({in_file[:4]}…) 앱까지 오지 않았습니다.")
         print(f"[설정]   파일: {env_file}")
         print("[설정]   ROBOFLOW_API_KEY 가 빈 값으로 환경에 이미 있으면 파일 값이 무시됩니다.")
         print("[설정]   그 창을 닫고 새로 여신 뒤 다시 켜 보세요.")
@@ -1811,7 +1873,12 @@ def _augment_water(p: dict) -> None:
         except ValueError:
             days = None
     p["days_since_watered"] = days
-    p["soil_dry"] = bool(days is not None and days > WATER_DRY_DAYS)
+    # 다음 예정일 — 형이 준 간격과 프로필을 섞어 낸다(watering.recommend).
+    # soil_dry 도 고정 3일이 아니라 그 포기의 예정일을 넘겼는지로 본다.
+    rec = watering.recommend(p)
+    p.update({k: rec[k] for k in ("next_water", "days_until", "interval_days", "basis")})
+    p["soil_dry"] = bool(rec["overdue"] or (rec["next_water"] is None
+                                            and days is not None and days > WATER_DRY_DAYS))
 
 
 def _water_date(raw: str = None) -> str:
@@ -1937,7 +2004,9 @@ def water_log(month: str = None):
             if month and not d.startswith(month):
                 continue
             counts[d] = counts.get(d, 0) + 1
-    return {"days": [{"date": d, "count": c} for d, c in sorted(counts.items())]}
+    due = watering.upcoming(PLANTS.values(), month) if month else {}
+    return {"days": [{"date": d, "count": c} for d, c in sorted(counts.items())],
+            "due": [{"date": d, "count": c} for d, c in sorted(due.items())]}
 
 # 품 등급은 '가장 큰 잎의 긴 변 길이(cm)'로 가른다.
 # 사진 전체 면적 대비 비율로 재던 예전 방식은 구도에 휘둘렸다 — 같은 식물도

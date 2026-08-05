@@ -93,12 +93,14 @@ Say '      설치 완료' Green
 # ---------------------------------------------------------------- 설정·바로가기
 Step '5/5' '설정 파일 + 자동 시작'
 $envFile = Join-Path $app 'farm_env.bat'
-$example = Join-Path $app 'farm_env.example.bat'
 $needKey = $false
 if (Test-Path -LiteralPath $envFile) {
     Say '      farm_env.bat 이미 있음 - 그대로 둡니다 (키가 지워지지 않습니다).'
 } else {
-    Copy-Item -LiteralPath $example -Destination $envFile
+    # 견본 파일을 두지 않는다. 앱이 자기 설정 파일을 직접 만든다 - 견본은 늘
+    # 둘 중 어느 쪽을 고쳐야 하는지 헷갈리게 했고, 거기 키를 적어 공개
+    # 저장소에 올리는 사고까지 났다.
+    Push-Location $app; & $py -c "import main" 2>&1 | Out-Null; Pop-Location
     $needKey = $true
     Say '      farm_env.bat 을 만들었습니다.'
 }

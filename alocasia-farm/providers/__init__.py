@@ -77,8 +77,8 @@ def select() -> Tuple[Detector, Detector]:
         print(f"[키] {api_key[:4]}… ({len(api_key)}자)  ← 로보플로우 대시보드의 "
               f"키 앞자리와 같은지 확인하세요")
     else:
-        print("[키] 없음 — farm_env.bat 의 ROBOFLOW_API_KEY 가 비어 있습니다 "
-              "(farm_env.example.bat 이 아니라 farm_env.bat 입니다)")
+        print("[키] 없음 — farm_env 파일의 ROBOFLOW_API_KEY 가 비어 있습니다. "
+              "= 뒤에 Private API Key 를 넣고 서버를 껐다 켜세요.")
 
     if api_key and (workflow_url or (workspace and workflow_id)):
         from .roboflow_workflow import WorkflowDetector

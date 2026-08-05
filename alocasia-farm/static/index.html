@@ -1161,6 +1161,8 @@ async function renderWaterCal(){
   let data={days:[]};
   try{ data=await(await fetch(`/api/water-log?month=${WCAL.y}-${mm}`)).json(); }catch(e){}
   const counts=Object.fromEntries(data.days.map(d=>[d.date,d.count]));
+  // 앞으로 물 줄 예정일. 실제로 준 기록과 헷갈리지 않게 다른 표시를 쓴다.
+  const due=Object.fromEntries((data.due||[]).map(d=>[d.date,d.count]));
   const grid=document.getElementById('waterCalGrid'); grid.innerHTML='';
   ['일','월','화','수','목','금','토'].forEach(d=>{
     const h=document.createElement('div'); h.textContent=d;
@@ -1178,11 +1180,15 @@ async function renderWaterCal(){
     const picked=dateStr===WCAL.sel;
     const cell=document.createElement('div');
     cell.style.cssText=`text-align:center;padding:5px 2px;border-radius:6px;
-      cursor:${future?'not-allowed':'pointer'};opacity:${future?.35:1};
+      cursor:${future?'not-allowed':'pointer'};opacity:${future?(due[dateStr]?.75:.35):1};
       background:${picked?'#2a5238':(cnt?'#1d3324':'#14201a')};
       border:1px solid ${picked?'#7ddb9a':(dateStr===todayStr?'#7ddb9a':'rgba(120,180,140,.15)')};
       color:#e8f0ea`;
-    cell.innerHTML=`<div>${d}</div>`+(cnt?`<div style="font-size:9px;color:#7ddb9a">💧${cnt}</div>`:'');
+    const plan=due[dateStr]||0;
+    cell.innerHTML=`<div>${d}</div>`
+      +(cnt?`<div style="font-size:9px;color:#7ddb9a">💧${cnt}</div>`
+           :(plan?`<div style="font-size:9px;color:#8fb3d9">◦${plan}</div>`:''));
+    if(plan&&!cnt) cell.style.borderStyle='dashed';
     if(!future) cell.addEventListener('click',()=>{ WCAL.sel=dateStr; renderWaterCal(); });
     grid.appendChild(cell);
   }
