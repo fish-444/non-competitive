@@ -19,7 +19,7 @@ import sys
 
 os.environ["FARM_DB"] = ""
 
-from main import NON_LEAF, group_plants   # noqa: E402
+from main import NON_LEAF, dedupe_leaves, group_plants   # noqa: E402
 
 
 # --------------------------------------------------------------------------- 자료
@@ -94,7 +94,8 @@ def n_leaves(group):
 def run():
     rows, pot_err, leaf_err = [], 0, 0
     for name, gt_pots, gt_leaves, boxes, src in cases():
-        groups, _ = group_plants(boxes)
+        # 앱과 같은 경로를 탄다 — detect_boxes 가 같은 잎을 두 번 잡은 것을 먼저 지운다
+        groups, _ = group_plants(dedupe_leaves(boxes))
         pots = len(groups)
         leaves = sum(n_leaves(g) for g in groups)
         dp, dl = pots - gt_pots, leaves - gt_leaves

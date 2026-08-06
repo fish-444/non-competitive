@@ -335,6 +335,41 @@ NOISE_CLASSES = {c.strip().lower() for c in
                  os.environ.get("NOISE_CLASSES", "weed,weeds,grass").split(",") if c.strip()}
 
 
+# 한 사진 안에서 같은 잎이 두 번 잡힌 것으로 볼 겹침 정도.
+# 워크플로(find-old-leaf-and-others)는 모델을 둘 돌린다. NMS 는 모델별로만
+# 돌기 때문에, 한 모델이 old leaf 로 다른 모델이 mature leaf 로 같은 잎을
+# 잡으면 둘 다 살아남는다 — extract_boxes 의 중복 키에 클래스명이 들어가서
+# 좌표가 같아도 다른 박스로 친다. 그래서 여기서 클래스를 무시하고 한 번 더 거른다.
+#
+# 문턱을 높게 잡은 이유: 알로카시아는 잎이 실제로 많이 겹친다(겹침 밀도 50% 대가
+# 정상이다). 진짜 중복은 거의 같은 박스라 IoU 가 0.8 이상으로 나오고, 서로 다른
+# 잎이 이만큼 겹치는 일은 드물다. 실제 사진 두 장에서 0.35 를 넘는 잎 쌍은
+# 하나도 없었다(bench_real.py) — 이 값은 그 여유 안에 있다.
+LEAF_DUP_IOU = float(os.environ.get("LEAF_DUP_IOU", "0.55"))
+
+
+def dedupe_leaves(boxes: List[dict]) -> List[dict]:
+    """같은 잎을 두 번 잡은 것을 지운다. 확신도가 높은 쪽을 남긴다.
+
+    캐노피·화분은 건드리지 않는다. 예전에 캐노피를 겹침으로 정리했다가 오히려
+    나빠진 적이 있다 — 큰 포기 박스 안에 들어앉은 '작은 이웃 포기' 와 '중복 박스'
+    를 겹침만으로는 구분할 수 없어서다. 잎은 사정이 다르다. 잎끼리는 같은 잎을
+    두 모델이 각각 잡은 경우가 실제로 생긴다.
+    """
+    leaves = [b for b in boxes if b["cls"].lower() not in NON_LEAF]
+    if len(leaves) < 2:
+        return boxes
+    kept: List[dict] = []
+    for b in sorted(leaves, key=lambda x: -(x.get("conf") or 0)):
+        if not any(_iou(b, k) >= LEAF_DUP_IOU for k in kept):
+            kept.append(b)
+    if len(kept) == len(leaves):
+        return boxes                       # 지운 게 없으면 순서를 흐트러뜨리지 않는다
+    keep_ids = {id(b) for b in kept}
+    return [b for b in boxes
+            if b["cls"].lower() in NON_LEAF or id(b) in keep_ids]
+
+
 def detect_boxes(image: Image.Image, detector=None):
     """이미지 → (픽셀 좌표 박스 목록, 이미지 면적 px²).
 
@@ -343,7 +378,7 @@ def detect_boxes(image: Image.Image, detector=None):
     """
     boxes, area = (detector or DETECT_TOP).detect(image)
     boxes = [b for b in boxes if b["cls"].lower() not in NOISE_CLASSES]
-    return boxes, area
+    return dedupe_leaves(boxes), area
 
 
 def _iou(a, b):

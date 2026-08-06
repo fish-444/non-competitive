@@ -249,6 +249,69 @@ def test_a_faint_empty_canopy_is_not_promoted_to_a_pot():
     assert len(groups) == 1, [n_leaves(g) for g in groups]
 
 
+# ── 같은 잎을 두 번 잡은 것 ──────────────────────────────────────────────
+# 워크플로는 모델을 둘 돌린다. NMS 는 모델별로만 돌아서, 한 모델이 old leaf 로
+# 다른 모델이 mature leaf 로 같은 잎을 잡으면 둘 다 살아남는다.
+from main import dedupe_leaves, LEAF_DUP_IOU
+
+
+def _b(cx, cy, w, h, cls="mature leaf", conf=0.9):
+    d = box(cx, cy, w, h, cls=cls)
+    d["conf"] = conf
+    return d
+
+
+def test_the_same_leaf_under_two_class_names_counts_once():
+    """클래스가 달라도 거의 같은 박스면 같은 잎이다 — 확신도 높은 쪽을 남긴다."""
+    boxes = [_b(100, 100, 60, 60, "old leaf", 0.92),
+             _b(102, 101, 58, 59, "mature leaf", 0.81)]
+    out = dedupe_leaves(boxes)
+    assert len(out) == 1, out
+    assert out[0]["cls"] == "old leaf", "확신도가 높은 쪽이 남아야 한다"
+
+
+def test_leaves_that_merely_overlap_both_survive():
+    """알로카시아는 잎이 실제로 많이 겹친다 — 겹쳤다고 지우면 안 된다."""
+    boxes = [_b(100, 100, 60, 60), _b(140, 100, 60, 60)]
+    assert len(dedupe_leaves(boxes)) == 2, "IoU 가 문턱 아래면 둘 다 남는다"
+
+
+def test_canopies_are_never_deduped():
+    """캐노피를 겹침으로 정리했다가 오히려 나빠진 적이 있다 — 잎만 건드린다."""
+    boxes = [box(200, 200, 400, 400, cls="canopy"),
+             box(205, 202, 396, 398, cls="canopy")]
+    assert len(dedupe_leaves(boxes)) == 2, dedupe_leaves(boxes)
+
+
+def test_a_chain_of_duplicates_collapses_to_one():
+    boxes = [_b(100, 100, 60, 60, "old leaf", 0.95),
+             _b(101, 100, 60, 60, "mature leaf", 0.90),
+             _b(100, 101, 59, 60, "shoot", 0.85)]
+    out = dedupe_leaves(boxes)
+    assert len(out) == 1 and out[0]["conf"] == 0.95, out
+
+
+def test_nothing_changes_when_there_is_nothing_to_drop():
+    """지울 게 없으면 목록을 그대로 돌려준다 — 순서가 바뀌면 아래 로직이 흔들린다."""
+    boxes = [_b(100, 100, 60, 60), _b(400, 400, 60, 60),
+             box(200, 200, 400, 400, cls="canopy")]
+    assert dedupe_leaves(boxes) is boxes
+
+
+def test_a_single_leaf_is_left_alone():
+    boxes = [_b(100, 100, 60, 60)]
+    assert dedupe_leaves(boxes) is boxes
+
+
+def test_the_kept_leaf_still_belongs_to_its_canopy():
+    """중복을 지운 뒤에도 잎이 제 화분에 붙어야 한다."""
+    boxes = [box(200, 200, 300, 300, cls="canopy"),
+             _b(200, 200, 60, 60, "old leaf", 0.92),
+             _b(202, 201, 58, 59, "mature leaf", 0.80)]
+    groups = group_leaves(dedupe_leaves(boxes))
+    assert len(groups) == 1 and n_leaves(groups[0]) == 1, leaf_sizes(groups)
+
+
 # ── 개별 사진: 가운데 포기만 ──────────────────────────────────────────────
 # 개체를 가까이 찍으면 프레임에 옆 포기 잎이 같이 들어온다. 그대로 세면 부풀어난다.
 from main import focus_on_center_canopy
