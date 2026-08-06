@@ -181,6 +181,18 @@
     </div>
     <div id="galleryInfo" style="font-size:10.5px;color:#6f8073;margin-top:5px"></div>
   </div>
+  <!-- farm.db 를 실수로 지워 기록을 통째로 잃은 적이 있다. 파일 하나로 빼 둘 수 있게 한다. -->
+  <div class="form" style="border-top:1px solid rgba(120,180,140,.18);padding-top:10px">
+    <div style="font-size:12px;color:#cfe0d4;margin-bottom:6px">💾 <b>백업</b></div>
+    <div class="mrow">
+      <button type="button" class="mbtn" id="backupBtn">내보내기</button>
+      <label class="mbtn" style="flex:none;padding:10px 14px;cursor:pointer">불러오기
+        <input type="file" id="restoreFile" accept="application/json,.json" style="display:none"></label>
+    </div>
+    <div id="backupInfo" style="font-size:10.5px;color:#6f8073;margin-top:5px">
+      식물·화분·물주기·성장 기록을 파일 하나로. 사진 원본은 photos/ 폴더를 따로 복사하세요.
+    </div>
+  </div>
   <!-- 조명 위치를 계산해 '어느 화분에 어느 식물을 둘까'를 제안한다 -->
   <div class="form" style="border-top:1px solid rgba(120,180,140,.18);padding-top:10px">
     <div style="font-size:12px;color:#cfe0d4;margin-bottom:6px">💡 <b>조명 위치</b> — 좌·우 레일 3개</div>
@@ -1348,6 +1360,30 @@ async function drawPlantPhotos(pid){
       </figure>`).join('') + '</div>';
   wireTiles(box);
 }
+
+// ===== 백업 =====
+document.getElementById('backupBtn').addEventListener('click',()=>{
+  // 서버가 Content-Disposition 을 붙여 주므로 링크를 열기만 하면 내려받아진다
+  const a=document.createElement('a'); a.href='/api/backup'; a.download='';
+  document.body.appendChild(a); a.click(); a.remove();
+  document.getElementById('backupInfo').textContent='✅ 내보냈습니다. 사진은 photos/ 폴더를 따로 복사하세요.';
+});
+document.getElementById('restoreFile').addEventListener('change',async e=>{
+  const f=e.target.files[0]; e.target.value='';
+  if(!f)return;
+  const info=document.getElementById('backupInfo');
+  // 통째로 갈아 끼우는 동작이라 한 번 묻는다
+  if(!confirm('지금 기록이 백업 파일의 내용으로 통째로 바뀝니다.\n\n계속할까요?\n(덮기 직전 상태는 farm-backup-이전.json 으로 남습니다)')) return;
+  info.textContent='불러오는 중…';
+  try{
+    const fd=new FormData(); fd.append('file',f);
+    const r=await fetch('/api/restore',{method:'POST',body:fd});
+    if(!r.ok){const err=await r.json().catch(()=>({}));throw new Error(err.detail||'복원 실패');}
+    const d=await r.json();
+    await loadAll(); await loadPots(); await loadCalib(); await loadLeaves();
+    info.textContent=`✅ 복원됨 — 식물 ${d.counts.plants}개 · 화분 ${d.counts.pots}개`;
+  }catch(err){ info.textContent='⚠️ '+err.message; }
+});
 
 // ===== 물주기 달력 =====
 // 매번 언제 물을 줬는지 잊어버리니, 하루에 몇 화분 줬는지 달로 훑어볼 수 있게 한다.

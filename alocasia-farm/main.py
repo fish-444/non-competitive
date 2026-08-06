@@ -32,6 +32,7 @@
 import base64
 import functools
 import io
+import json
 import math
 import os
 import re
@@ -2132,6 +2133,87 @@ def get_photo(rel: str):
     """보관해 둔 원본 사진."""
     from fastapi.responses import Response
     return Response(read_photo(rel), media_type="image/jpeg")
+
+
+# 백업에 담을 것들. 저장(save_state)과 같은 목록이어야 한다 — 한쪽에만 있으면
+# 백업으로 되살렸을 때 조용히 빠진다.
+BACKUP_PARTS = (("plants", PLANTS), ("pots", POTS), ("leaves", LEAVES),
+                ("leaf_fixes", LEAF_FIXES), ("env", ENVIRONMENT),
+                ("scans", SCANS), ("calib", CALIB))
+BACKUP_VERSION = 1
+
+
+def backup_payload() -> dict:
+    """지금 상태를 통째로 담은 dict. 사진 파일은 안 담는다(용량).
+
+    살아 있는 PLANTS/POTS 를 그대로 넘기면 '백업을 만든 시점' 과 '파일로 쓰는 시점'
+    사이에 상태가 바뀌었을 때 조용히 어긋난다. 여기서 복사본으로 떠 둔다 —
+    JSON 을 거쳐 뜨므로 직렬화가 안 되는 값이 섞여 있으면 여기서 바로 걸린다.
+    """
+    snapshot = json.loads(json.dumps({k: v for k, v in BACKUP_PARTS},
+                                     ensure_ascii=False))
+    return {"kind": "alocasia-farm-backup", "version": BACKUP_VERSION,
+            "at": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "counts": {k: len(v) for k, v in snapshot.items()},
+            "note": "사진 원본(photos/)은 이 파일에 없습니다. 따로 복사해 두세요.",
+            "state": snapshot}
+
+
+def restore_payload(data: dict) -> dict:
+    """백업 dict → 현재 상태로 되돌린다. 되돌리기 전 상태를 파일로 남긴다.
+
+    통째로 갈아 끼우는 동작이라 잘못된 파일을 넣으면 지금 기록이 사라진다.
+    그래서 (1) 형식을 먼저 확인하고 (2) 덮기 직전 상태를 farm-backup-이전.json
+    으로 떨어뜨린다. 실수해도 되돌릴 길을 남겨 둔다.
+    """
+    if not isinstance(data, dict) or data.get("kind") != "alocasia-farm-backup":
+        raise HTTPException(400, "이 앱의 백업 파일이 아니에요.")
+    state = data.get("state")
+    if not isinstance(state, dict):
+        raise HTTPException(400, "백업 파일이 손상됐어요 (state 없음).")
+    for key, cur in BACKUP_PARTS:
+        val = state.get(key)
+        if val is not None and not isinstance(val, type(cur)):
+            raise HTTPException(400, f"백업 파일의 '{key}' 모양이 이상해요.")
+
+    before = os.path.join(os.getcwd(), "farm-backup-이전.json")
+    try:
+        with open(before, "w", encoding="utf-8") as f:
+            json.dump(backup_payload(), f, ensure_ascii=False)
+    except OSError:
+        before = ""                       # 못 남겨도 복원은 진행한다
+
+    for key, cur in BACKUP_PARTS:
+        val = state.get(key)
+        cur.clear()
+        if isinstance(cur, dict) and isinstance(val, dict):
+            cur.update(val)
+        elif isinstance(cur, list) and isinstance(val, list):
+            cur.extend(val)
+    save_state()
+    return {"ok": True, "counts": {k: len(v) for k, v in BACKUP_PARTS},
+            "previous_saved_to": before}
+
+
+@app.get("/api/backup")
+def download_backup():
+    """식물·화분·물주기·성장 기록을 파일 하나로 내려받는다."""
+    from fastapi.responses import Response
+    body = json.dumps(backup_payload(), ensure_ascii=False, indent=1).encode("utf-8")
+    name = f"farm-backup-{time.strftime('%Y%m%d-%H%M')}.json"
+    return Response(body, media_type="application/json; charset=utf-8",
+                    headers={"Content-Disposition": f'attachment; filename="{name}"'})
+
+
+@app.post("/api/restore")
+async def upload_backup(file: UploadFile = File(...)):
+    """내려받아 둔 백업 파일로 되돌린다. 지금 기록은 통째로 바뀐다."""
+    raw = await file.read()
+    try:
+        data = json.loads(raw.decode("utf-8"))
+    except (ValueError, UnicodeDecodeError):
+        raise HTTPException(400, "백업 파일을 읽을 수 없어요 (JSON 형식).")
+    return restore_payload(data)
 
 
 @app.get("/api/calibration")

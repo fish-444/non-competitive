@@ -23,3 +23,6 @@ water_profile.json
 # 분석한 원본 사진 보관함(PHOTO_DIR).
 # 용량이 크고 각자의 온실 사진이라 로컬에만 둔다.
 photos/
+
+# 내보낸 백업 파일과 복원 직전 자동 스냅샷. 개인 기록이라 로컬에만 둔다.
+farm-backup*.json
