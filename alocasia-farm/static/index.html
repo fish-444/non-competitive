@@ -552,15 +552,20 @@ function makeAlocasia(unit,counts){
   const g=new THREE.Group();
   for(let i=0;i<total;i++){
     const stage=seq[i], ang=(i/total)*Math.PI*2+i*0.7, px=Math.cos(ang), pz=Math.sin(ang);
-    const petH=(4+(i%3))*unit, lean=0.32+(i%2)*0.18;
+    const petH=(4+(i%3))*unit, lean=0.46+(i%2)*0.20;
     const pet=new THREE.Mesh(new THREE.CylinderGeometry(0.1*unit,0.16*unit,petH,5),PET_MAT);
     pet.position.set(px*0.5*unit,petH/2,pz*0.5*unit); pet.rotation.set(pz*lean,0,-px*lean); pet.castShadow=true; g.add(pet);
     const mat=new THREE.MeshStandardMaterial({color:STAGE_COL[stage],roughness:0.5,side:THREE.DoubleSide});
     const bl=new THREE.Mesh(LEAF_GEO,mat);
     const mul=stage==='shoot'?0.6:stage==='old'?1.15:1.0;         // 새순 작게, 늙은잎 크게
     const bs=(1.5+(i%3)*0.35)*unit*mul; bl.scale.set(bs,bs,bs);
-    bl.position.set(px*(0.5*unit+petH*0.5*lean+bs*0.2),(petH+Math.cos(lean)*0.3*unit)*0.98,pz*(0.5*unit+petH*0.5*lean+bs*0.2));
-    bl.rotation.y=-ang+Math.PI/2; bl.rotation.x=-1.38-lean*0.15; bl.castShadow=true; g.add(bl);
+    // 잎을 거의 수평으로 눕힌다(-90°가 완전 수평). 예전엔 -82° 쯤이라 들려 있어
+    // 옆에서 보면 서로 겹쳐 뭉쳐 보였다. 층마다 조금씩 달리 눕혀 z-파이팅을 피한다.
+    const tilt=-Math.PI/2+0.02+(i%3)*0.03;
+    // 눕히면 잎이 더 넓게 보이므로 바깥으로 더 밀어 겹침을 줄인다.
+    const reach=0.5*unit+petH*0.5*lean+bs*0.42;
+    bl.position.set(px*reach,(petH+Math.cos(lean)*0.3*unit)*0.98,pz*reach);
+    bl.rotation.y=-ang+Math.PI/2; bl.rotation.x=tilt; bl.castShadow=true; g.add(bl);
   }
   return g;}
 // 3D 식물 크기 = 모델1의 '맨 위 잎' 크기
