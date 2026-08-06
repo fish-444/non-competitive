@@ -82,6 +82,11 @@ rem set CONFIDENCE=15
 
 rem 저장 파일 위치 (기본: 이 폴더의 farm.db)
 rem set FARM_DB=D:\\백업\\farm.db
+
+rem 분석한 원본 사진을 남길 폴더 (기본: 이 폴더의 photos).
+rem 남겨 두면 모델이 좋아졌을 때 옛 사진을 다시 분석할 수 있습니다.
+rem 빈 값으로 두면 안 남깁니다.
+rem set PHOTO_DIR=D:\\백업\\photos
 """
 
 
@@ -238,6 +243,15 @@ SLOTS = [{"label": f"{r}{c + 1}",
 # 식물·화분 자리를 파일에 남긴다. 안 그러면 서버를 끌 때마다 손으로 고친 값과
 # 새 잎 기록이 통째로 날아간다. FARM_DB="" 로 두면 저장하지 않는다(테스트용).
 FARM_DB = os.environ.get("FARM_DB", "farm.db")
+
+# 분석한 원본 사진을 남겨 둘 곳. "" 로 두면 안 남긴다.
+# 지금까지는 박스를 그린 520px 썸네일만 남기고 원본은 버렸다. 그래서
+#   · 모델이 좋아져도 옛 사진을 다시 분석할 수 없고
+#   · 재학습에 쓸 자료가 안 모이고
+#   · "왜 이렇게 나왔지" 를 되짚을 수 없었다(썸네일은 이미 판정이 반영된 결과물).
+# FARM_DB 를 비운 건 "이 실행은 아무것도 남기지 않는다"는 뜻이다(테스트). 그때는
+# 사진도 안 남긴다 — 안 그러면 테스트를 돌릴 때마다 photos/ 가 쌓인다.
+PHOTO_DIR = os.environ.get("PHOTO_DIR", "photos" if FARM_DB else "")
 
 
 def _db():
@@ -1227,6 +1241,40 @@ def _draw_boxes(image: Image.Image, kept: List[dict], dropped: List[dict],
     return out
 
 
+def archive_photo(raw: bytes, tag: str = "scan") -> str:
+    """분석한 원본 사진을 파일로 남기고 상대경로를 돌려준다. 못 남기면 "".
+
+    DB 에 넣지 않고 파일로 둔다 — 사진 한 장이 몇 MB 라 base64 로 DB 에 넣으면
+    금방 무거워지고, 파일이면 탐색기로 열어 보거나 통째로 백업하기도 쉽다.
+    달 폴더로 나눠 한 폴더에 수천 장이 쌓이지 않게 한다.
+    """
+    if not PHOTO_DIR or not raw:
+        return ""
+    rel = os.path.join(time.strftime("%Y-%m"), f"{tag}_{uuid.uuid4().hex[:8]}.jpg")
+    dest = os.path.join(PHOTO_DIR, rel)
+    try:
+        os.makedirs(os.path.dirname(dest), exist_ok=True)
+        with open(dest, "wb") as f:
+            f.write(raw)
+    except OSError as e:
+        print(f"[사진] 원본을 저장하지 못했습니다: {e}")
+        return ""
+    return rel.replace(os.sep, "/")
+
+
+def read_photo(rel: str) -> bytes:
+    """보관한 원본을 읽는다. PHOTO_DIR 바깥은 절대 못 읽게 막는다."""
+    if not rel or not PHOTO_DIR:
+        raise HTTPException(404, "보관된 사진이 없어요.")
+    root = os.path.abspath(PHOTO_DIR)
+    path = os.path.abspath(os.path.join(root, rel))
+    # ../ 로 빠져나가 다른 파일을 읽으려는 요청을 막는다
+    if os.path.commonpath([root, path]) != root or not os.path.isfile(path):
+        raise HTTPException(404, "보관된 사진이 없어요.")
+    with open(path, "rb") as f:
+        return f.read()
+
+
 def _analyze_file(raw: bytes) -> dict:
     try:
         image = Image.open(io.BytesIO(raw)).convert("RGB")
@@ -1366,6 +1414,7 @@ async def add_plant(name: str = Form(...), file: UploadFile = File(...), pos: st
 
     raw = await file.read()
     metrics, feat = _analyze_file(raw)
+    metrics["photo"] = archive_photo(raw, "plant")
 
     pid = uuid.uuid4().hex[:8]
     plant = {"id": pid, "name": name, "pos": slot["label"], "x": slot["x"], "z": slot["z"], "rot": 0,
@@ -1441,6 +1490,7 @@ async def scan_farm(file: UploadFile = File(...), replace: str = Form(None),
     removed = _drop_orphans()      # 예전 화분 좌표로 만들어진 유령 정리
 
     scan_id = "sc_" + uuid.uuid4().hex[:8]
+    photo = archive_photo(raw, "scan")
     result = _register_groups(
         groups, space_w, space_h,
         feat_of=lambda g: _mean_features([leaf_features(image, b, box_to_px) for b in g
@@ -1451,6 +1501,7 @@ async def scan_farm(file: UploadFile = File(...), replace: str = Form(None),
         mode=scan_mode,
         cm_per_unit=(_W / space_w) if space_w else None,
         distance_correct=True,          # 한 장 탑뷰 — 카메라가 선반 가운데 위
+        photo=photo,
         verdicts=verdicts, scan_id=scan_id,
         leaf_extra_of=lambda b: {"bbox_px": [round(b["x1"] * box_to_px, 1),
                                              round(b["y1"] * box_to_px, 1),
@@ -1576,7 +1627,7 @@ def _register_groups(groups: List[List[dict]], space_w: float, space_h: float,
                      slot_of=None, mode: str = "update",
                      cm_per_unit: float = None, verdicts: dict = None,
                      scan_id: str = None, leaf_extra_of=None,
-                     distance_correct: bool = False) -> List[dict]:
+                     distance_correct: bool = False, photo: str = "") -> List[dict]:
     """무리 목록 → 자리 배정 후 등록/갱신. 스캔 엔드포인트들이 함께 쓴다.
 
     distance_correct 는 **한 장 탑뷰에서만** 켠다. 카메라가 선반 한가운데 위에
@@ -1661,6 +1712,8 @@ def _register_groups(groups: List[List[dict]], space_w: float, space_h: float,
             existing["x"], existing["z"] = round(px_cm, 2), round(pz_cm, 2)
             existing.update(metrics)
             existing["updated"] = now
+            if photo:
+                existing["photo"] = photo      # 한 장에서 나온 포기들이 같은 원본을 가리킨다
             _record_growth(existing)           # 덮어쓰기 전의 값도 이력에 남아 있다
             FEATS[existing["id"]] = feat
             if verdicts:
@@ -1671,6 +1724,8 @@ def _register_groups(groups: List[List[dict]], space_w: float, space_h: float,
             plant = {"id": pid, "name": f"식물 {slot['label']}", "pos": slot["label"],
                      "x": round(px_cm, 2), "z": round(pz_cm, 2), "rot": 0,
                      "updated": time.strftime("%Y-%m-%d %H:%M:%S"), **metrics}
+            if photo:
+                plant["photo"] = photo
             _record_growth(plant)              # 첫 측정도 이력의 시작점이 된다
             PLANTS[pid] = plant
             FEATS[pid] = feat
@@ -1839,8 +1894,10 @@ async def reanalyze(pid: str, file: UploadFile = File(...)):
         raise HTTPException(404, "없는 식물")
     raw = await file.read()
     metrics, feat = _analyze_file(raw)
+    metrics["photo"] = archive_photo(raw, "plant")
     PLANTS[pid].update(metrics)
     PLANTS[pid]["updated"] = time.strftime("%Y-%m-%d %H:%M:%S")
+    _record_growth(PLANTS[pid])
     FEATS[pid] = feat
     _recompute_shape_groups()
     save_state()
@@ -1869,7 +1926,7 @@ GROWTH_LOG_DAYS = int(os.environ.get("GROWTH_LOG_DAYS", "400"))
 
 # 이력에 남길 값들. 나머지(겹침·단계별 잎 수 등)는 그때그때 다시 잴 수 있고,
 # 다 남기면 farm.db 만 무거워진다. 크기와 잎 수가 '얼마나 자랐나' 의 전부다.
-GROWTH_FIELDS = ("canopy_cm", "leaf_max_cm", "leaf_count", "size_class")
+GROWTH_FIELDS = ("canopy_cm", "leaf_max_cm", "leaf_count", "size_class", "photo")
 
 
 def _record_growth(plant: dict, src: str = "scan") -> None:
@@ -2022,6 +2079,37 @@ def unwater_all_plants(day: str):
         _augment_water(p)
     save_state()
     return {"ok": True, "undone": undone, "date": when}
+
+
+@app.get("/api/photos/{rel:path}")
+def get_photo(rel: str):
+    """보관해 둔 원본 사진."""
+    from fastapi.responses import Response
+    return Response(read_photo(rel), media_type="image/jpeg")
+
+
+@app.post("/api/plants/{pid}/rescan")
+def rescan_from_archive(pid: str):
+    """새로 찍지 않고 **보관된 원본**을 다시 분석한다.
+
+    모델을 새 버전으로 올렸을 때 옛 사진에도 그 개선을 적용하려면 이게 필요하다.
+    지금까지는 원본을 안 남겨서, 모델이 좋아져도 다시 찍어 올리는 수밖에 없었다.
+    """
+    if pid not in PLANTS:
+        raise HTTPException(404, "없는 식물")
+    rel = PLANTS[pid].get("photo")
+    if not rel:
+        raise HTTPException(400, "이 화분은 보관된 원본이 없어요. 사진을 새로 올려 주세요.")
+    metrics, feat = _analyze_file(read_photo(rel))
+    metrics["photo"] = rel                       # 사진은 그대로, 판정만 새로
+    PLANTS[pid].update(metrics)
+    PLANTS[pid]["updated"] = time.strftime("%Y-%m-%d %H:%M:%S")
+    PLANTS[pid].pop("manual", None)              # 새 탐지값으로 덮었다
+    FEATS[pid] = feat
+    _record_growth(PLANTS[pid], src="rescan")
+    _recompute_shape_groups()
+    save_state()
+    return PLANTS[pid]
 
 
 @app.get("/api/plants/{pid}/history")

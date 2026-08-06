@@ -19,3 +19,7 @@ bench_data/
 # 각자 받은 데이터셋에서 계산한 값이라 로컬에 둔다.
 # 없으면 watering.DEFAULT_PROFILE(잠정값)로 돈다.
 water_profile.json
+
+# 분석한 원본 사진 보관함(PHOTO_DIR).
+# 용량이 크고 각자의 온실 사진이라 로컬에만 둔다.
+photos/
