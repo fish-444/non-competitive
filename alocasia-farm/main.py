@@ -231,6 +231,12 @@ ENVIRONMENT: dict = {}
 # 여기 한 번만 쌓는다. 최신이 뒤로 간다.
 #   [{"id": scan_id, "at": "2026-08-06 10:19:00", "rel": "2026-08/scan_xx.jpg",
 #     "plants": 9, "kind": "scan"}]
+# 선반 네 모서리(사진에서의 위치, 0~1 비율). 한 번 지정하면 계속 재사용한다.
+#   {"corners": [[u,v] × 4  좌상·우상·우하·좌하], "at": "..."}
+# 이게 없으면 '사진 폭 = 선반 폭(60cm)' 이라고 가정한다 — 사진을 여유 있게 찍으면
+# 모든 cm 가 그만큼 작게, 바짝 찍으면 크게 나온다. 20% 씩 흔들리는 오차다.
+CALIB: dict = {}
+
 SCANS: List[dict] = []
 SCAN_KEEP = int(os.environ.get("SCAN_KEEP", "300"))
 # 번호 붙은 자리(슬롯): 온실 60x40cm 을 촘촘한 격자로 분할
@@ -276,7 +282,8 @@ def save_state() -> None:
         with _db() as con:
             for key, val in (("plants", PLANTS), ("pots", POTS),
                              ("leaves", LEAVES), ("leaf_fixes", LEAF_FIXES),
-                             ("env", ENVIRONMENT), ("scans", SCANS)):
+                             ("env", ENVIRONMENT), ("scans", SCANS),
+                             ("calib", CALIB)):
                 con.execute(
                     "INSERT INTO state(key,value) VALUES(?,?) "
                     "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
@@ -299,6 +306,7 @@ def load_state() -> None:
         LEAF_FIXES.extend(json.loads(rows.get("leaf_fixes", "[]")))
         ENVIRONMENT.update(json.loads(rows.get("env", "{}")))
         SCANS.extend(json.loads(rows.get("scans", "[]")))
+        CALIB.update(json.loads(rows.get("calib", "{}")))
         if PLANTS or POTS:
             print(f"[저장소] 식물 {len(PLANTS)}개 · 화분자리 {len(POTS)}개 · "
                   f"잎 {len(LEAVES)}장 불러옴 ({FARM_DB})")
@@ -621,6 +629,30 @@ def synthetic_pots(space_w: float, space_h: float) -> List[dict]:
         r = min(space_w, space_h) * 0.1
     return [{"cls": "pot", "conf": 1.0, "x1": x - r, "y1": y - r,
              "x2": x + r, "y2": y + r, "area": 4 * r * r} for x, y in pts]
+
+
+def shelf_frame(space_w: float, space_h: float):
+    """저장된 모서리 → (선반 cm 좌표로 보내는 행렬, 60, 40). 없으면 None.
+
+    모서리는 사진 안에서의 비율(0~1)로 저장해 두므로, 워크플로가 사진을 리사이즈해도
+    그대로 쓸 수 있다. 여기서 박스 좌표계 크기에 맞춰 되돌린다.
+
+    보내는 곳이 단위사각형이 아니라 **선반 실측 cm** 인 것이 핵심이다. 변환하고 나면
+    박스의 폭이 곧 cm 라서 배율을 따로 곱할 일이 없다 — '사진 폭 = 60cm' 라는
+    추측이 사라진다.
+    """
+    quad = CALIB.get("corners")
+    if not quad or len(quad) != 4 or not space_w or not space_h:
+        return None
+    try:
+        src = [(float(u) * space_w, float(v) * space_h) for u, v in quad]
+    except (TypeError, ValueError):
+        return None
+    dst = [(0.0, 0.0), (_W, 0.0), (_W, _D), (0.0, _D)]
+    try:
+        return homography(src, dst), _W, _D
+    except HTTPException:
+        return None                       # 네 점이 일직선이면 보정 없이 간다
 
 
 def group_by_pots_indexed(leaves: List[dict], pots: List[dict],
@@ -1498,7 +1530,18 @@ async def scan_farm(file: UploadFile = File(...), replace: str = Form(None),
     space_h = math.sqrt(img_area / aspect) if aspect else float(image.height)
     box_to_px = image.width / space_w if space_w else 1.0
 
-    groups, slots = group_plants(boxes, image, box_to_px, canvas=(space_w, space_h))
+    # 선반 모서리를 지정해 뒀으면 박스를 선반 cm 좌표로 옮긴다. 그러면 사진을
+    # 여유 있게 찍든 바짝 찍든 같은 포기가 같은 cm 로 나온다.
+    frame = shelf_frame(space_w, space_h)
+    calibrated = frame is not None
+    if calibrated:
+        H, space_w, space_h = frame
+        boxes = [warp_box(H, b) for b in boxes]
+        img_area = space_w * space_h
+        box_to_px = 0.0            # 잎 색을 뽑을 픽셀 좌표를 못 되돌린다 — 모양만 본다
+
+    groups, slots = group_plants(boxes, image if not calibrated else None,
+                                 box_to_px, canvas=(space_w, space_h))
     if not groups:
         raise HTTPException(400, "사진에서 잎을 찾지 못했어요. 조명·각도를 바꿔 다시 찍어 주세요.")
 
@@ -1517,7 +1560,8 @@ async def scan_farm(file: UploadFile = File(...), replace: str = Form(None),
         img_area=img_area,
         slot_of=(lambda g: slots.get(id(g))) if slots else None,
         mode=scan_mode,
-        cm_per_unit=(_W / space_w) if space_w else None,
+        # 보정했으면 박스 좌표가 이미 cm 다. 아니면 '사진 폭 = 60cm' 로 어림한다.
+        cm_per_unit=1.0 if calibrated else ((_W / space_w) if space_w else None),
         distance_correct=True,          # 한 장 탑뷰 — 카메라가 선반 가운데 위
         verdicts=verdicts, scan_id=scan_id,
         leaf_extra_of=lambda b: {"bbox_px": [round(b["x1"] * box_to_px, 1),
@@ -2088,6 +2132,56 @@ def get_photo(rel: str):
     """보관해 둔 원본 사진."""
     from fastapi.responses import Response
     return Response(read_photo(rel), media_type="image/jpeg")
+
+
+@app.get("/api/calibration")
+def get_calibration():
+    """선반 모서리 지정 상태."""
+    return {"calibrated": bool(CALIB.get("corners")), **CALIB}
+
+
+@app.post("/api/calibration")
+async def set_calibration(corners: str = Form(...)):
+    """탑뷰 사진에서 선반 네 모서리를 지정한다 — 좌상·우상·우하·좌하 순서.
+
+    좌표는 **사진 안에서의 비율(0~1)** 로 받는다. 픽셀로 받으면 다음에 다른
+    해상도로 찍었을 때 못 쓴다.
+
+    한 번 지정하면 계속 재사용된다. 카메라를 옮기거나 선반을 다시 놓았을 때만
+    새로 지정하면 된다.
+    """
+    import json
+    try:
+        quad = json.loads(corners)
+    except ValueError:
+        raise HTTPException(400, "모서리를 읽을 수 없어요 (JSON 형식).")
+    if not isinstance(quad, list) or len(quad) != 4:
+        raise HTTPException(400, "모서리는 정확히 4점이어야 해요 (좌상·우상·우하·좌하).")
+    try:
+        pts = [[float(u), float(v)] for u, v in quad]
+    except (TypeError, ValueError):
+        raise HTTPException(400, "모서리 좌표가 숫자가 아니에요.")
+    if any(not (-0.2 <= c <= 1.2) for p in pts for c in p):
+        raise HTTPException(400, "모서리는 사진 안의 비율(0~1)로 주세요.")
+    # 일직선이면 호모그래피를 못 만든다 — 저장하기 전에 걸러 준다
+    try:
+        homography([tuple(p) for p in pts], [(0.0, 0.0), (_W, 0.0), (_W, _D), (0.0, _D)])
+    except HTTPException:
+        raise HTTPException(400, "네 점이 일직선이거나 겹칩니다. 선반 모서리를 다시 찍어 주세요.")
+
+    CALIB.clear()
+    CALIB.update({"corners": pts, "at": time.strftime("%Y-%m-%d %H:%M:%S"),
+                  "w_cm": _W, "d_cm": _D})
+    save_state()
+    return {"ok": True, "calibrated": True, **CALIB}
+
+
+@app.delete("/api/calibration")
+def clear_calibration():
+    """모서리 지정을 지운다 — 다시 '사진 폭 = 60cm' 어림으로 돌아간다."""
+    CALIB.clear()
+    save_state()
+    return {"ok": True, "calibrated": False}
 
 
 @app.get("/api/scans")

@@ -140,6 +140,12 @@
     <div id="potInfo" style="font-size:10.5px;color:#6f8073;margin-top:5px">
       화분 위치를 한 번 찍어 두면 pot 라벨링 없이 개체가 갈립니다
     </div>
+    <!-- cm 를 실제 길이로 재려면 선반이 사진 어디까지인지 알아야 한다.
+         화분 자리 지정도 같은 네 모서리를 받으므로 그때 함께 저장된다. -->
+    <label class="mbtn" style="display:block;margin-top:9px;padding:10px;border-radius:9px;border:1px solid rgba(120,150,190,.35);background:#1b2430;color:#cfe0f0;font-size:13px;font-weight:600;cursor:pointer;text-align:center">
+      📏 선반 모서리 지정 (크기 보정)<input type="file" id="calibFile" accept="image/*" style="display:none">
+    </label>
+    <div id="calibInfo" style="font-size:10.5px;color:#6f8073;margin-top:5px"></div>
     <div id="potMap" style="display:none;position:relative;width:238px;height:159px;margin-top:6px;
       background:#0e1512;border:1px solid rgba(120,180,140,.22);border-radius:7px"></div>
     <!-- 화분 두 개 사이에 걸친 잎만 골라 보여 준다. 끌어서(또는 눌러서) 위 지도의 화분에 놓으면 소속이 바뀐다 -->
@@ -895,6 +901,12 @@ document.getElementById('potFile').addEventListener('change',e=>{
   CAL.mode='pot'; CAL.files=[f]; CAL.i=0;
   calWrap.style.display='flex'; showCal();
 });
+document.getElementById('calibFile').addEventListener('change',e=>{
+  const f=e.target.files[0]; e.target.value='';
+  if(!f)return;
+  CAL.mode='calib'; CAL.files=[f]; CAL.i=0;
+  calWrap.style.display='flex'; showCal();
+});
 function bindPotClear(){
   const a=document.getElementById('potClear'); if(!a)return;
   a.addEventListener('click',async ev=>{ ev.preventDefault();
@@ -935,6 +947,37 @@ document.getElementById('multiFile').addEventListener('change',e=>{
 // 'pot'(화분 자리만 지정)과 'potscan'(같은 사진으로 지정 후 바로 스캔)은
 // 모서리·화분 클릭 단계가 완전히 같다 — 마지막에 스캔까지 이어지느냐만 다르다.
 function isPotMode(){ return CAL.mode==='pot'||CAL.mode==='potscan'; }
+// 찍은 네 모서리를 '사진 안에서의 비율' 로 바꿔 배율 보정으로 저장한다.
+// 픽셀로 보내면 다음에 다른 해상도로 찍었을 때 못 쓴다.
+async function saveCalibFromPts(){
+  if(CAL.pts.length!==4) return false;
+  const W=calImg.naturalWidth, H=calImg.naturalHeight;
+  if(!W||!H) return false;
+  const fd=new FormData();
+  fd.append('corners',JSON.stringify(CAL.pts.map(p=>[p.x/W,p.y/H])));
+  try{
+    const r=await fetch('/api/calibration',{method:'POST',body:fd});
+    if(!r.ok) return false;
+    await loadCalib();
+    return true;
+  }catch(e){ return false; }
+}
+async function loadCalib(){
+  const el=document.getElementById('calibInfo'); if(!el) return;
+  try{
+    const d=await(await fetch('/api/calibration')).json();
+    if(d.calibrated){
+      el.innerHTML=`✅ 선반 모서리 지정됨 (${(d.at||'').slice(0,10)}) — 촬영 거리가 달라도 `
+        +`같은 cm 로 잽니다 <a href="#" id="calibClear" style="color:#c98">지우기</a>`;
+      const a=document.getElementById('calibClear');
+      a&&a.addEventListener('click',async ev=>{ ev.preventDefault();
+        await fetch('/api/calibration',{method:'DELETE'}); loadCalib(); });
+    } else {
+      el.innerHTML='<span style="color:#e8a64a">⚠️ 미지정 — 지금은 '
+        +"'사진 폭 = 60cm' 로 어림합니다. 촬영 범위가 달라지면 cm 가 같이 흔들립니다.</span>";
+    }
+  }catch(e){}
+}
 function showCal(){
   CAL.pts=[]; CAL.pots=[]; CAL.refs=[]; CAL.pending=null; calNext.disabled=true;
   document.getElementById('refPick').style.display='none';
@@ -968,7 +1011,9 @@ function updCalStep(){
   if(CAL.pts.length<4){ el.textContent=`${CAL.pts.length+1}번째: ${names[CAL.pts.length]} 모서리`; return; }
   el.textContent=isPotMode()
     ? `이제 화분 중심을 하나씩 클릭 — 현재 ${CAL.pots.length}개 (빈 화분도 찍어 두면 나중에 심었을 때 바로 잡힙니다)`
-    : '네 점 완료 — [다음]을 누르세요';
+    : (CAL.mode==='calib'
+        ? '네 모서리 완료 — [다음]을 누르면 저장됩니다'
+        : '네 점 완료 — [다음]을 누르세요');
 }
 function drawCal(){
   const g=calCv.getContext('2d'); g.clearRect(0,0,calCv.width,calCv.height);
@@ -1044,8 +1089,20 @@ calNext.addEventListener('click',async()=>{
     CAL.files=[]; CAL.mode='multi';
     return;
   }
+  if(CAL.mode==='calib'){
+    calWrap.style.display='none';
+    if(CAL.url){URL.revokeObjectURL(CAL.url);CAL.url=null;}
+    const ok=await saveCalibFromPts();
+    document.getElementById('calibInfo').textContent=
+      ok?'✅ 선반 모서리를 저장했습니다.':'⚠️ 저장 실패 — 네 점이 일직선인지 확인하세요.';
+    if(ok) loadCalib();
+    CAL.files=[]; CAL.mode='multi';
+    return;
+  }
   if(isPotMode()){
     const scanAfter=CAL.mode==='potscan', scanFile2=CAL.files[0];
+    // 화분 지정도 같은 네 모서리를 받는다 — 배율 보정으로도 함께 저장한다.
+    await saveCalibFromPts();
     calWrap.style.display='none';
     if(CAL.url){URL.revokeObjectURL(CAL.url);CAL.url=null;}
     const fd=new FormData();
@@ -1486,7 +1543,7 @@ document.getElementById('mReFile').addEventListener('change',async(e)=>{
 
 addEventListener('resize',()=>{camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight);});
 (function loop(){requestAnimationFrame(loop);controls.update();renderer.render(scene,camera);})();
-loadEnvironment(); loadPots().then(loadLeaves); loadAll();
+loadEnvironment(); loadPots().then(loadLeaves); loadAll(); loadCalib();
 </script>
 </body>
 </html>
