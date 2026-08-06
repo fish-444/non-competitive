@@ -19,7 +19,7 @@ import main
 
 
 def _reset():
-    main.POTS.clear(); main.PLANTS.clear(); main.FEATS.clear()
+    main.POTS.clear(); main.PLANTS.clear()
     main.LEAVES.clear(); main.LEAF_FIXES.clear()
 
 

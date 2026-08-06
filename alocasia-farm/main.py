@@ -214,7 +214,6 @@ app = FastAPI(title="Alocasia Smart Farm")
 
 # --------------------------------------------------------------------------- 상태
 PLANTS: Dict[str, dict] = {}          # id -> 식물 상태
-FEATS: Dict[str, dict] = {}           # id -> 생김새 특징(모양 그룹 계산용, 응답에는 안 나감)
 # 미리 지정한 화분 자리 — 모델에 pot 클래스를 라벨링하는 대신 쓴다.
 # 화분은 안 움직이니 한 번만 찍어 두면 계속 재사용되고, 자리(슬롯)가 고정돼
 # 매번 스캔해도 "이 화분 = 항상 같은 식물"이 유지된다. 선반 정규좌표(0~1).
@@ -275,7 +274,7 @@ def save_state() -> None:
     import json
     try:
         with _db() as con:
-            for key, val in (("plants", PLANTS), ("feats", FEATS), ("pots", POTS),
+            for key, val in (("plants", PLANTS), ("pots", POTS),
                              ("leaves", LEAVES), ("leaf_fixes", LEAF_FIXES),
                              ("env", ENVIRONMENT), ("scans", SCANS)):
                 con.execute(
@@ -295,7 +294,6 @@ def load_state() -> None:
         with _db() as con:
             rows = dict(con.execute("SELECT key, value FROM state").fetchall())
         PLANTS.update(json.loads(rows.get("plants", "{}")))
-        FEATS.update(json.loads(rows.get("feats", "{}")))
         POTS.extend(json.loads(rows.get("pots", "[]")))
         LEAVES.update(json.loads(rows.get("leaves", "{}")))
         LEAF_FIXES.extend(json.loads(rows.get("leaf_fixes", "[]")))
@@ -590,39 +588,6 @@ def shape_similarity(a: dict, b: dict) -> float:
         dh = abs(a["h"] - b["h"]); dh = min(dh, 256 - dh)      # 색상은 원형이라 최단거리
         d += (dh / 26.0) ** 2 + (abs(a["s"] - b["s"]) / 70.0) ** 2 + (abs(a["v"] - b["v"]) / 70.0) ** 2
     return math.exp(-math.sqrt(d))
-
-
-def _label_shape_groups(items: List[dict], feats: List[dict]) -> None:
-    """식물들을 생김새로 묶어 '모양 그룹' 딱지(A, B, C…)를 붙인다.
-
-    같은 품종이면 다른 화분에 있어도 같은 딱지가 붙는다.
-    """
-    n = len(items)
-    parent = list(range(n))
-
-    def find(a):
-        while parent[a] != a:
-            parent[a] = parent[parent[a]]
-            a = parent[a]
-        return a
-
-    for i in range(n):
-        for j in range(i + 1, n):
-            if shape_similarity(feats[i], feats[j]) >= SHAPE_SIM:
-                ri, rj = find(i), find(j)
-                if ri != rj:
-                    parent[rj] = ri
-
-    # 큰 무리부터 A, B, C … 순서로
-    buckets: Dict[int, List[int]] = {}
-    for i in range(n):
-        buckets.setdefault(find(i), []).append(i)
-    order = sorted(buckets.values(), key=len, reverse=True)
-    for gi, members in enumerate(order):
-        tag = chr(ord("A") + gi) if gi < 26 else f"G{gi + 1}"
-        for i in members:
-            items[i]["shape_group"] = tag
-            items[i]["shape_group_size"] = len(members)
 
 
 def _mean_features(feats: List[dict]) -> dict:
@@ -1243,13 +1208,6 @@ def analyze_metrics(boxes: List[dict], img_area: float, cm_per_unit: float = Non
     return out
 
 
-def _recompute_shape_groups() -> None:
-    """등록된 식물 전체를 생김새로 다시 묶어 '모양 그룹' 딱지를 갱신한다."""
-    ids = [pid for pid in PLANTS if pid in FEATS]
-    if ids:
-        _label_shape_groups([PLANTS[pid] for pid in ids], [FEATS[pid] for pid in ids])
-
-
 # 클래스별 색 — 모달 사진 위에 그리는 박스.
 BOX_COLORS = {"canopy": (255, 150, 40), "shoot": (90, 220, 255),
               "old": (240, 210, 60), "mature": (90, 230, 120)}
@@ -1383,11 +1341,7 @@ def _analyze_file(raw: bytes) -> dict:
     metrics["thumb"] = "data:image/jpeg;base64," + base64.b64encode(tb.getvalue()).decode()
 
     # 이 식물의 생김새 = 잎들의 특징 평균 (모양 그룹 딱지 계산에 쓰임)
-    leaves = [b for b in boxes_top if b["cls"].lower() not in NON_LEAF]
-    box_to_px = (image.width / math.sqrt(img_area * (image.width / image.height))
-                 if img_area else 1.0)
-    feat = _mean_features([leaf_features(image, b, box_to_px) for b in leaves])
-    return metrics, feat
+    return metrics
 
 
 # --------------------------------------------------------------------------- 엔드포인트
@@ -1483,15 +1437,13 @@ async def add_plant(name: str = Form(...), file: UploadFile = File(...), pos: st
         raise HTTPException(400, "빈 자리가 없어요. 식물을 제거해 자리를 비워 주세요.")
 
     raw = await file.read()
-    metrics, feat = _analyze_file(raw)
+    metrics = _analyze_file(raw)
     rel = archive_photo(raw, "plant")
 
     pid = uuid.uuid4().hex[:8]
     plant = {"id": pid, "name": name, "pos": slot["label"], "x": slot["x"], "z": slot["z"], "rot": 0,
              "updated": time.strftime("%Y-%m-%d %H:%M:%S"), **metrics}
     PLANTS[pid] = plant
-    FEATS[pid] = feat
-    _recompute_shape_groups()
     save_state()
     return plant
 
@@ -1555,15 +1507,12 @@ async def scan_farm(file: UploadFile = File(...), replace: str = Form(None),
     scan_mode = _scan_mode(mode, replace)
     if scan_mode == "replace":
         PLANTS.clear()
-        FEATS.clear()
         LEAVES.clear()
     removed = _drop_orphans()      # 예전 화분 좌표로 만들어진 유령 정리
 
     scan_id = "sc_" + uuid.uuid4().hex[:8]
     result = _register_groups(
         groups, space_w, space_h,
-        feat_of=lambda g: _mean_features([leaf_features(image, b, box_to_px) for b in g
-                                          if b["cls"].lower() not in NON_LEAF]),
         per_plant_area=img_area / len(groups),      # 식물 1개 몫 — 대/중/소엽 기준
         img_area=img_area,
         slot_of=(lambda g: slots.get(id(g))) if slots else None,
@@ -1579,9 +1528,8 @@ async def scan_farm(file: UploadFile = File(...), replace: str = Form(None),
     # 전체 사진은 한 장이 여러 포기를 담는다 — 화분마다 복사하지 않고 여기 한 번.
     _add_scan_photo(archive_photo(raw, "scan"), scan_id, len(result))
 
-    shapes = {p.get("shape_group") for p in result if p.get("shape_group")}
     return {"count": len(result), "grouped_by": _grouped_by(boxes, slots),
-            "shape_groups": len(shapes), "mode": scan_mode, "removed": removed,
+            "mode": scan_mode, "removed": removed,
             "new_leaves": sum(p.get("new_leaves", 0) for p in result),
             "leaves": leaf_report(scan_id), "plants": result}
 
@@ -1644,7 +1592,6 @@ def _drop_orphans() -> int:
     gone = [pid for pid, p in PLANTS.items() if p.get("pos") not in keep]
     for pid in gone:
         PLANTS.pop(pid, None)
-        FEATS.pop(pid, None)
         _forget_leaves(pid)
     return len(gone)
 
@@ -1694,7 +1641,7 @@ def _grouped_by(boxes: List[dict], slots: dict) -> str:
 
 
 def _register_groups(groups: List[List[dict]], space_w: float, space_h: float,
-                     feat_of, per_plant_area: float, img_area: float,
+                     per_plant_area: float, img_area: float,
                      slot_of=None, mode: str = "update",
                      cm_per_unit: float = None, verdicts: dict = None,
                      scan_id: str = None, leaf_extra_of=None,
@@ -1763,7 +1710,6 @@ def _register_groups(groups: List[List[dict]], space_w: float, space_h: float,
         metrics = {}
         metrics.update(analyze_top(g, img_area, ref_area=per_plant_area))
         metrics.update(analyze_metrics(g, img_area, scale))
-        feat = feat_of(g)
 
         if existing:
             now = time.strftime("%Y-%m-%d %H:%M:%S")
@@ -1784,7 +1730,6 @@ def _register_groups(groups: List[List[dict]], space_w: float, space_h: float,
             existing.update(metrics)
             existing["updated"] = now
             _record_growth(existing)           # 덮어쓰기 전의 값도 이력에 남아 있다
-            FEATS[existing["id"]] = feat
             if verdicts:
                 _record_leaves(existing, g, verdicts, scan_id, scale, leaf_extra_of)
             result.append(existing)
@@ -1795,13 +1740,11 @@ def _register_groups(groups: List[List[dict]], space_w: float, space_h: float,
                      "updated": time.strftime("%Y-%m-%d %H:%M:%S"), **metrics}
             _record_growth(plant)              # 첫 측정도 이력의 시작점이 된다
             PLANTS[pid] = plant
-            FEATS[pid] = feat
             by_slot[slot["label"]] = plant
             if verdicts:
                 _record_leaves(plant, g, verdicts, scan_id, scale, leaf_extra_of)
             result.append(plant)
     _ensure_pot_slots(result)
-    _recompute_shape_groups()
     save_state()
     return result
 
@@ -1920,15 +1863,10 @@ async def scan_multi(files: List[UploadFile] = File(...), corners: str = Form(No
 
     scan_mode = _scan_mode(mode, replace)
     if scan_mode == "replace":
-        PLANTS.clear(); FEATS.clear(); LEAVES.clear()
+        PLANTS.clear(); LEAVES.clear()
     removed = _drop_orphans()      # 예전 화분 좌표로 만들어진 유령 정리
 
     src_of = {id(merged[i]): sources[i] for i in keep}
-    feat_of_box = {id(merged[i]): feats[i] for i in keep}
-
-    def feat_of(group):
-        return _mean_features([feat_of_box[id(b)] for b in group
-                               if b["cls"].lower() not in NON_LEAF])
 
     def leaf_extra_of(b):
         """합친 좌표 말고 원본 사진 어디서 온 잎인지도 남긴다."""
@@ -1939,15 +1877,14 @@ async def scan_multi(files: List[UploadFile] = File(...), corners: str = Form(No
 
     canvas_area = CANVAS * canvas_h
     scan_id = "sc_" + uuid.uuid4().hex[:8]
-    result = _register_groups(groups, CANVAS, canvas_h, feat_of,
+    result = _register_groups(groups, CANVAS, canvas_h,
                               canvas_area / len(groups), canvas_area,
                               slot_of=(lambda g: slots.get(id(g))) if slots else None,
                               mode=scan_mode, cm_per_unit=_W / CANVAS,
                               verdicts=verdicts, scan_id=scan_id,
                               leaf_extra_of=leaf_extra_of)
-    shapes = {p.get("shape_group") for p in result if p.get("shape_group")}
     return {"count": len(result), "photos": len(files), "merged_boxes": len(boxes_m),
-            "deduped": dropped, "shape_groups": len(shapes), "mode": scan_mode,
+            "deduped": dropped, "mode": scan_mode,
             "removed": removed,
             "new_leaves": sum(p.get("new_leaves", 0) for p in result),
             "leaves": leaf_report(scan_id),
@@ -1960,13 +1897,11 @@ async def reanalyze(pid: str, file: UploadFile = File(...)):
     if pid not in PLANTS:
         raise HTTPException(404, "없는 식물")
     raw = await file.read()
-    metrics, feat = _analyze_file(raw)
+    metrics = _analyze_file(raw)
     PLANTS[pid].update(metrics)
     PLANTS[pid]["updated"] = time.strftime("%Y-%m-%d %H:%M:%S")
     _add_plant_photo(PLANTS[pid], archive_photo(raw, "plant"))
     _record_growth(PLANTS[pid])
-    FEATS[pid] = feat
-    _recompute_shape_groups()
     save_state()
     return PLANTS[pid]
 
@@ -2183,14 +2118,12 @@ def rescan_from_archive(pid: str):
     rel = album[-1]["rel"] if album else PLANTS[pid].get("photo")
     if not rel:
         raise HTTPException(400, "이 화분은 보관된 원본이 없어요. 사진을 새로 올려 주세요.")
-    metrics, feat = _analyze_file(read_photo(rel))
+    metrics = _analyze_file(read_photo(rel))
     metrics["photo"] = rel                       # 사진은 그대로, 판정만 새로
     PLANTS[pid].update(metrics)
     PLANTS[pid]["updated"] = time.strftime("%Y-%m-%d %H:%M:%S")
     PLANTS[pid].pop("manual", None)              # 새 탐지값으로 덮었다
-    FEATS[pid] = feat
     _record_growth(PLANTS[pid], src="rescan")
-    _recompute_shape_groups()
     save_state()
     return PLANTS[pid]
 
@@ -2624,9 +2557,7 @@ def remove_plant(pid: str):
     if pid not in PLANTS:
         raise HTTPException(404, "없는 식물")
     del PLANTS[pid]
-    FEATS.pop(pid, None)
     _forget_leaves(pid)
-    _recompute_shape_groups()
     save_state()
     return {"ok": True, "id": pid}
 

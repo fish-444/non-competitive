@@ -27,7 +27,7 @@ def _restart():
 
 
 def _clear():
-    main.PLANTS.clear(); main.FEATS.clear(); main.POTS.clear()
+    main.PLANTS.clear(); main.POTS.clear()
     main.LEAVES.clear(); main.LEAF_FIXES.clear()
     main.save_state()
 
@@ -55,8 +55,6 @@ def test_plants_survive_a_restart():
                          "x": 0, "z": 0, "rot": 90, "leaf_count": 5,
                          "shoot_count": 1, "mature_count": 3, "old_count": 1,
                          "size_class": "중품", "manual": True}
-    main.FEATS["p1"] = {"aspect": 1.2, "size": 100, "h": 60, "s": 180,
-                        "v": 120, "has_color": True}
     main.save_state()
 
     m2 = _restart()
@@ -65,7 +63,6 @@ def test_plants_survive_a_restart():
     assert p["name"] == "프라이덱" and p["pos"] == "C3"
     assert p["rot"] == 90 and p["leaf_count"] == 5
     assert p["manual"] is True, "손으로 고친 표시가 사라졌다"
-    assert m2.FEATS["p1"]["aspect"] == 1.2, "모양 특징이 안 살아났다"
 
 
 def test_pot_layout_survives_a_restart():

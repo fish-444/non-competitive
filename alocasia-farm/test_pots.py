@@ -48,7 +48,7 @@ def _set_pots(points):
 
 
 def _reset():
-    main.POTS.clear(); main.PLANTS.clear(); main.FEATS.clear()
+    main.POTS.clear(); main.PLANTS.clear()
 
 
 def test_pots_get_distinct_slots():

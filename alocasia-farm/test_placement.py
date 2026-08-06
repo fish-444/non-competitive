@@ -32,7 +32,7 @@ def _spot(slot, x_cm, z_cm, plant=None, r_cm=13.0, h_cm=28.0):
 
 
 def _reset():
-    main.POTS.clear(); main.PLANTS.clear(); main.FEATS.clear()
+    main.POTS.clear(); main.PLANTS.clear()
     main.LEAVES.clear(); main.LEAF_FIXES.clear(); main.ENVIRONMENT.clear()
 
 

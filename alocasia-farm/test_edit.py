@@ -41,7 +41,7 @@ def _jpeg():
 
 
 def _reset():
-    main.POTS.clear(); main.PLANTS.clear(); main.FEATS.clear()
+    main.POTS.clear(); main.PLANTS.clear()
 
 
 def _plant(**kw):

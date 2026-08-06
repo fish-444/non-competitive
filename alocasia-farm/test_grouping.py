@@ -9,7 +9,7 @@ import os
 os.environ["FARM_DB"] = ""      # 테스트는 파일에 저장하지 않는다
 
 from main import (analyze_metrics, analyze_top, group_by_pots_indexed, group_plants,
-                  leaf_features, shape_similarity, _label_shape_groups)
+                  leaf_features, shape_similarity)
 
 
 def group_leaves(boxes, image=None, box_to_px=1.0, feats=None):
@@ -488,7 +488,7 @@ def test_the_thumbnail_shows_what_was_counted():
     try:
         buf = io.BytesIO()
         Image.new("RGB", (900, 900), (18, 40, 26)).save(buf, format="JPEG")
-        m, _ = main._analyze_file(buf.getvalue())
+        m = main._analyze_file(buf.getvalue())
     finally:
         main.detect_boxes = orig
 
@@ -683,18 +683,6 @@ def test_leaf_features_survive_degenerate_boxes():
     assert f["aspect"] == 1.0 and f["has_color"] is False
 
 
-def test_shape_groups_label_varieties():
-    """생김새가 닮은 개체끼리 같은 딱지를, 다른 개체는 다른 딱지를 받는다."""
-    items = [{"name": "둥근잎1"}, {"name": "둥근잎2"}, {"name": "길쭉잎"}]
-    feats = [feat(aspect=1.2, size=100), feat(aspect=1.25, size=104),
-             feat(aspect=3.2, size=100)]
-    _label_shape_groups(items, feats)
-    assert items[0]["shape_group"] == items[1]["shape_group"]
-    assert items[2]["shape_group"] != items[0]["shape_group"]
-    # 큰 무리가 A 를 받는다
-    assert items[0]["shape_group"] == "A" and items[0]["shape_group_size"] == 2
-
-
 def test_shape_helps_a_stray_leaf_find_its_own_pot():
     """화분 밖으로 뻗은 잎: 거리만 보면 옆 화분, 생김새를 보면 제 화분.
 
@@ -834,54 +822,6 @@ def test_farm_scan_does_not_clobber_a_dedicated_photo_thumbnail():
         main.PLANTS.clear()
         main.PLANTS.update(orig_plants)
 
-
-def test_scan_labels_varieties_across_pots():
-    """서로 떨어진 화분이라도 생김새가 같으면 같은 모양 그룹을 받는다."""
-    import asyncio, io
-    from PIL import Image
-    import main
-
-    class _Upload:
-        content_type = "image/jpeg"
-
-        def __init__(self, raw):
-            self._raw = raw
-
-        async def read(self):
-            return self._raw
-
-    # 대각선으로 마주 보는 화분끼리 같은 품종 (위치가 아니라 생김새로 묶이는지 확인)
-    plan = [(300, 400, "long"), (900, 400, "round"),
-            (300, 1000, "round"), (900, 1000, "long")]
-    boxes = []
-    for px, py, kind in plan:
-        boxes.append(box(px, py, 200, 200, "pot"))
-        for dx, dy in [(-180, -90), (180, -90), (0, -200)]:
-            w, h = (80, 240) if kind == "long" else (190, 190)
-            boxes.append(box(px + dx, py + dy, w, h))
-
-    buf = io.BytesIO()
-    Image.new("RGB", (1200, 1400), (20, 80, 30)).save(buf, format="JPEG")
-
-    orig_detect, orig_plants, orig_feats = main.detect_boxes, dict(main.PLANTS), dict(main.FEATS)
-    main.detect_boxes = lambda image, det=None: (boxes, float(1200 * 1400))
-    main.PLANTS.clear(); main.FEATS.clear()
-    try:
-        res = asyncio.run(main.scan_farm(file=_Upload(buf.getvalue()), replace=None, mode=None))
-        assert res["count"] == 4, res["count"]
-        assert res["shape_groups"] == 2, res["shape_groups"]
-
-        # 같은 품종끼리는 같은 딱지, 다른 품종끼리는 다른 딱지 → 2개씩 두 무리
-        groups = {}
-        for p in res["plants"]:
-            groups.setdefault(p["shape_group"], []).append(p["pos"])
-        assert sorted(len(v) for v in groups.values()) == [2, 2], groups
-        for p in res["plants"]:
-            assert p["shape_group_size"] == 2, p
-    finally:
-        main.detect_boxes = orig_detect
-        main.PLANTS.clear(); main.PLANTS.update(orig_plants)
-        main.FEATS.clear(); main.FEATS.update(orig_feats)
 
 
 if __name__ == "__main__":

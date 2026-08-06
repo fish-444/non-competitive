@@ -43,7 +43,7 @@ def _jpeg(w=1200, h=800):
 
 
 def _reset():
-    main.POTS.clear(); main.PLANTS.clear(); main.FEATS.clear()
+    main.POTS.clear(); main.PLANTS.clear()
     main.LEAVES.clear(); main.LEAF_FIXES.clear()
 
 

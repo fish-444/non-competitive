@@ -119,9 +119,9 @@ def _run_multi(per_image_boxes, regions, quads=None):
         quads = [[[0, 0], [1200, 0], [1200, 900], [0, 900]] for _ in range(n)]
 
     orig_detect = main.detect_boxes
-    orig_plants, orig_feats = dict(main.PLANTS), dict(main.FEATS)
+    orig_plants = dict(main.PLANTS)
     main.detect_boxes = fake_detect
-    main.PLANTS.clear(); main.FEATS.clear()
+    main.PLANTS.clear()
     try:
         return asyncio.run(main.scan_multi(
             files=[_Upload(_jpeg()) for _ in range(n)],
@@ -130,7 +130,6 @@ def _run_multi(per_image_boxes, regions, quads=None):
     finally:
         main.detect_boxes = orig_detect
         main.PLANTS.clear(); main.PLANTS.update(orig_plants)
-        main.FEATS.clear(); main.FEATS.update(orig_feats)
 
 
 def _plant(cx, cy):
