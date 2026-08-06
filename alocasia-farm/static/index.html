@@ -166,6 +166,15 @@
     </div>
     <div id="waterAllInfo" style="font-size:10.5px;color:#6f8073;margin-top:5px"></div>
   </div>
+  <!-- 찍은 사진 되돌아보기. 전체 탑뷰는 한 장이 여러 포기를 담으므로 여기 모으고,
+       개체 사진은 그 화분 모달에서 본다. -->
+  <div class="form" style="border-top:1px solid rgba(120,180,140,.18);padding-top:10px">
+    <div style="font-size:12px;color:#cfe0d4;margin-bottom:6px">📷 <b>사진첩</b></div>
+    <div class="mrow">
+      <button type="button" class="mbtn" id="galleryBtn">전체 사진 보기</button>
+    </div>
+    <div id="galleryInfo" style="font-size:10.5px;color:#6f8073;margin-top:5px"></div>
+  </div>
   <!-- 조명 위치를 계산해 '어느 화분에 어느 식물을 둘까'를 제안한다 -->
   <div class="form" style="border-top:1px solid rgba(120,180,140,.18);padding-top:10px">
     <div style="font-size:12px;color:#cfe0d4;margin-bottom:6px">💡 <b>조명 위치</b> — 좌·우 레일 3개</div>
@@ -250,9 +259,14 @@
       <div class="stat"><div class="k">총 잎 개수</div><div class="v" id="mLeaf">–</div></div>
       <div class="stat"><div class="k">겹침 밀도</div><div class="v" id="mDen">–</div></div>
     </div>
-    <div style="margin:2px 0 13px;display:flex;align-items:center;justify-content:space-between;gap:10px;
-      background:#1a2620;border-radius:9px;padding:9px 12px">
-      <div id="mGrowth" style="font-size:12px;color:#cfe0d4;width:100%;margin-bottom:8px"></div>
+    <!-- 사진·성장은 가로로 길어서 물주기 줄(flex)에 같이 넣으면 눌려 찌그러진다.
+         바깥 블록으로 빼고, 물주기 줄만 flex 로 남긴다. -->
+    <div style="margin:2px 0 0;background:#1a2620;border-radius:9px 9px 0 0;padding:9px 12px 0">
+      <div id="mPhotos" style="margin-bottom:8px"></div>
+      <div id="mGrowth" style="font-size:12px;color:#cfe0d4;margin-bottom:8px"></div>
+    </div>
+    <div style="margin:0 0 13px;display:flex;align-items:center;justify-content:space-between;gap:10px;
+      background:#1a2620;border-radius:0 0 9px 9px;padding:0 12px 9px">
       <div style="font-size:12px;color:#cfe0d4">💧 <b>물 상태</b> — <span id="mWaterInfo">–</span></div>
       <button type="button" class="mbtn" id="mWaterBtn" style="flex:none;padding:8px 14px">물 줬어요</button>
     </div>
@@ -282,6 +296,25 @@
     </div>
     <div id="mUpd"></div>
   </div>
+</div>
+
+<!-- 사진첩 — 전체 탑뷰 목록 / 사진 한 장 크게 보기 -->
+<div id="galWrap" style="position:fixed;inset:0;background:rgba(0,0,0,.8);z-index:66;display:none;
+  align-items:center;justify-content:center">
+  <div style="background:#16211b;border:1px solid rgba(120,180,140,.3);border-radius:14px;padding:18px;
+    width:640px;max-width:94vw;max-height:88vh;overflow:auto">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+      <b id="galTitle" style="color:#7ddb9a;font-size:14px">전체 사진</b>
+      <button type="button" class="mbtn" id="galClose" style="flex:none;padding:6px 14px">닫기</button>
+    </div>
+    <div id="galBody"></div>
+  </div>
+</div>
+
+<div id="galOne" style="position:fixed;inset:0;background:rgba(0,0,0,.92);z-index:67;display:none;
+  align-items:center;justify-content:center;cursor:zoom-out">
+  <img id="galOneImg" style="max-width:94vw;max-height:88vh;border-radius:10px">
+  <div id="galOneCap" style="position:absolute;bottom:16px;color:#cfe0d4;font-size:12px"></div>
 </div>
 
 <!-- 물주기 달력 -->
@@ -1117,7 +1150,7 @@ function openModal(p){
     (p.size_class==='미검출'?'이 화분은 잎이 잡히지 않았어요 — 아래에서 직접 넣어 주세요 · ':'')
     + (p.updated?('최근 분석: '+p.updated):'');
   const rv=p.rot||0; document.getElementById('mRot').value=rv; document.getElementById('mRotV').textContent=rv+'°';
-  drawGrowth(p.id);
+  drawGrowth(p.id); drawPlantPhotos(p.id);
   const wi=document.getElementById('mWaterInfo');
   document.querySelectorAll('#mSoilPick button').forEach(b=>
     b.setAttribute('aria-pressed', b.dataset.soil===(p.soil||'일반') ? 'true':'false'));
@@ -1201,6 +1234,71 @@ document.getElementById('waterAllBtn').addEventListener('click',async()=>{
   await loadAll();
   if(document.getElementById('waterCalWrap').style.display==='flex') renderWaterCal();
 });
+
+// ===== 사진첩 =====
+// 전체 탑뷰는 한 장이 여러 포기를 담으므로 /api/scans 에 한 번만 쌓인다.
+// 개체 사진은 화분마다 따로 쌓여서(/api/plants/{id}/photos) 모달에서 본다.
+function showOnePhoto(rel, cap){
+  document.getElementById('galOneImg').src='/api/photos/'+rel;
+  document.getElementById('galOneCap').textContent=cap||'';
+  document.getElementById('galOne').style.display='flex';
+}
+document.getElementById('galOne').addEventListener('click',()=>
+  document.getElementById('galOne').style.display='none');
+
+function photoTiles(rows, capOf){
+  if(!rows.length) return '<div style="color:#6f8073;font-size:12px">아직 없습니다.</div>';
+  return '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px">'
+    + rows.map(r=>`<figure style="margin:0;cursor:zoom-in" data-rel="${r.rel}" data-cap="${capOf(r)}">
+        <img src="/api/photos/${r.rel}" loading="lazy" style="width:100%;aspect-ratio:4/3;
+          object-fit:cover;border-radius:8px;border:1px solid rgba(120,180,140,.2)">
+        <figcaption style="font-size:10px;color:#6f8073;margin-top:3px">${capOf(r)}</figcaption>
+      </figure>`).join('') + '</div>';
+}
+
+function wireTiles(root){
+  root.querySelectorAll('figure[data-rel]').forEach(f=>
+    f.addEventListener('click',()=>showOnePhoto(f.dataset.rel, f.dataset.cap)));
+}
+
+async function openGallery(){
+  const body=document.getElementById('galBody');
+  document.getElementById('galTitle').textContent='전체 사진 (온실 탑뷰)';
+  body.innerHTML='<div style="color:#6f8073;font-size:12px">불러오는 중...</div>';
+  document.getElementById('galWrap').style.display='flex';
+  let d={rows:[]};
+  try{ d=await(await fetch('/api/scans')).json(); }catch(e){}
+  body.innerHTML=photoTiles(d.rows||[], r=>`${(r.at||'').slice(0,16)} · 화분 ${r.plants}개`);
+  wireTiles(body);
+  document.getElementById('galleryInfo').textContent=
+    d.count?`전체 사진 ${d.count}장 보관 중`:'아직 전체 사진이 없습니다.';
+}
+document.getElementById('galleryBtn').addEventListener('click',openGallery);
+document.getElementById('galClose').addEventListener('click',()=>
+  document.getElementById('galWrap').style.display='none');
+
+// 모달 안 — 이 화분만 찍은 사진들
+async function drawPlantPhotos(pid){
+  const box=document.getElementById('mPhotos'); if(!box) return;
+  box.innerHTML='';
+  let d={rows:[]};
+  try{ d=await(await fetch(`/api/plants/${pid}/photos`)).json(); }catch(e){ return; }
+  if(!(d.rows||[]).length){
+    box.innerHTML='<span style="color:#6f8073;font-size:11px">📷 개체 사진 없음 — '
+      +'아래 "새 사진으로 갱신" 으로 이 화분을 가까이 찍어 두면 여기 쌓입니다.</span>';
+    return;
+  }
+  box.innerHTML='<div style="font-size:11px;color:#9fb4a6;margin-bottom:5px">📷 <b>이 화분 사진</b> '
+    +`<span style="color:#6f8073">${d.rows.length}장 · 눌러서 크게</span></div>`
+    +'<div style="display:flex;gap:6px;overflow-x:auto;padding-bottom:4px">'
+    + d.rows.map(r=>`<figure style="margin:0;flex:none;cursor:zoom-in" data-rel="${r.rel}"
+        data-cap="${(r.on||'').slice(0,16)}">
+        <img src="/api/photos/${r.rel}" loading="lazy" style="width:84px;height:64px;object-fit:cover;
+          border-radius:6px;border:1px solid rgba(120,180,140,.2)">
+        <figcaption style="font-size:9px;color:#6f8073;text-align:center">${(r.on||'').slice(5,10)}</figcaption>
+      </figure>`).join('') + '</div>';
+  wireTiles(box);
+}
 
 // ===== 물주기 달력 =====
 // 매번 언제 물을 줬는지 잊어버리니, 하루에 몇 화분 줬는지 달로 훑어볼 수 있게 한다.

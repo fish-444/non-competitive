@@ -97,12 +97,88 @@ def test_an_empty_reference_is_404():
             raise AssertionError("빈 경로는 404 여야 한다")
 
 
+# ── 개체 사진은 화분마다 / 전체 사진은 한 번만 ───────────────────────────
+def test_a_pots_own_photos_pile_up_in_its_album():
+    p = {"id": "a1"}
+    main._add_plant_photo(p, "2026-08/plant_1.jpg")
+    main._add_plant_photo(p, "2026-08/plant_2.jpg")
+    assert [r["rel"] for r in p["photo_log"]] == ["2026-08/plant_1.jpg", "2026-08/plant_2.jpg"]
+    assert p["photo"] == "2026-08/plant_2.jpg", "최신이 대표 사진"
+
+
+def test_a_full_scan_is_stored_once_not_per_pot():
+    """전체 탑뷰 한 장이 화분 9개를 담았다고 사진이 9번 쌓이면 안 된다."""
+    main.SCANS.clear()
+    main._add_scan_photo("2026-08/scan_1.jpg", "sc_x", 9)
+    assert len(main.SCANS) == 1, main.SCANS
+    assert main.SCANS[0]["plants"] == 9 and main.SCANS[0]["kind"] == "scan"
+    main.SCANS.clear()
+
+
+def test_a_full_scan_never_lands_in_a_pots_album():
+    """개체 사진이 전체 사진에 덮여 사라지면 안 된다 — 다른 통에 담는다."""
+    main.PLANTS.clear(); main.SCANS.clear()
+    p = {"id": "a2"}
+    main._add_plant_photo(p, "2026-08/plant_1.jpg")
+    main._add_scan_photo("2026-08/scan_1.jpg", "sc_y", 3)
+    assert [r["rel"] for r in p["photo_log"]] == ["2026-08/plant_1.jpg"]
+    assert p["photo"] == "2026-08/plant_1.jpg", "전체 스캔이 개체 대표 사진을 덮으면 안 된다"
+    main.SCANS.clear()
+
+
+def test_albums_do_not_grow_without_bound():
+    p = {"id": "a3"}
+    for i in range(main.PHOTO_KEEP + 20):
+        main._add_plant_photo(p, f"2026-08/plant_{i}.jpg")
+    assert len(p["photo_log"]) == main.PHOTO_KEEP
+
+
+def test_the_scan_list_does_not_grow_without_bound():
+    main.SCANS.clear()
+    for i in range(main.SCAN_KEEP + 15):
+        main._add_scan_photo(f"2026-08/scan_{i}.jpg", f"sc_{i}", 1)
+    assert len(main.SCANS) == main.SCAN_KEEP
+    main.SCANS.clear()
+
+
+def test_nothing_is_recorded_when_archiving_is_off():
+    p = {"id": "a4"}
+    main._add_plant_photo(p, "")
+    main.SCANS.clear()
+    main._add_scan_photo("", "sc_z", 2)
+    assert "photo_log" not in p and main.SCANS == []
+
+
+def test_the_lists_come_back_newest_first():
+    main.SCANS.clear()
+    main._add_scan_photo("2026-08/scan_a.jpg", "sc_a", 1)
+    main._add_scan_photo("2026-08/scan_b.jpg", "sc_b", 2)
+    assert main.list_scans()["rows"][0]["id"] == "sc_b"
+
+    main.PLANTS["a5"] = {"id": "a5"}
+    main._add_plant_photo(main.PLANTS["a5"], "2026-08/plant_a.jpg")
+    main._add_plant_photo(main.PLANTS["a5"], "2026-08/plant_b.jpg")
+    assert main.list_plant_photos("a5")["rows"][0]["rel"] == "2026-08/plant_b.jpg"
+    main.PLANTS.clear(); main.SCANS.clear()
+
+
+def test_photos_of_an_unknown_plant_is_404():
+    main.PLANTS.clear()
+    try:
+        main.list_plant_photos("없는것")
+    except HTTPException as e:
+        assert e.status_code == 404
+    else:
+        raise AssertionError("없는 식물은 404 여야 한다")
+
+
 # ── 보관본으로 다시 분석 ─────────────────────────────────────────────────
 def test_rescan_uses_the_archived_original():
     """모델이 좋아졌을 때 다시 찍지 않고 옛 사진에 적용할 수 있어야 한다."""
     rel = main.archive_photo(_jpeg(), "plant")
     main.PLANTS["p1"] = {"id": "p1", "name": "t", "pos": "A1", "x": 0, "z": 0,
-                         "rot": 0, "photo": rel, "manual": True}
+                         "rot": 0, "manual": True}
+    main._add_plant_photo(main.PLANTS["p1"], rel)
     out = main.rescan_from_archive("p1")
     assert out["photo"] == rel, "사진은 그대로, 판정만 새로"
     assert "leaf_count" in out, out

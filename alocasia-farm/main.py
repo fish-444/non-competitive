@@ -227,6 +227,13 @@ LEAVES: Dict[str, dict] = {}          # leaf_id -> 잎 하나
 LEAF_FIXES: List[dict] = []           # [{"u","v","pot_slot"}]
 # 조명·팬 실측 위치(cm). 비어 있으면 placement 의 기본값을 쓴다.
 ENVIRONMENT: dict = {}
+
+# 온실 전체를 찍은 사진들. 한 장이 여러 포기를 담으므로 화분마다 복사하지 않고
+# 여기 한 번만 쌓는다. 최신이 뒤로 간다.
+#   [{"id": scan_id, "at": "2026-08-06 10:19:00", "rel": "2026-08/scan_xx.jpg",
+#     "plants": 9, "kind": "scan"}]
+SCANS: List[dict] = []
+SCAN_KEEP = int(os.environ.get("SCAN_KEEP", "300"))
 # 번호 붙은 자리(슬롯): 온실 60x40cm 을 촘촘한 격자로 분할
 # 기본 A1~E10 (5줄 x 10칸 = 50자리)
 _ROWS = ["A", "B", "C", "D", "E"]
@@ -270,7 +277,7 @@ def save_state() -> None:
         with _db() as con:
             for key, val in (("plants", PLANTS), ("feats", FEATS), ("pots", POTS),
                              ("leaves", LEAVES), ("leaf_fixes", LEAF_FIXES),
-                             ("env", ENVIRONMENT)):
+                             ("env", ENVIRONMENT), ("scans", SCANS)):
                 con.execute(
                     "INSERT INTO state(key,value) VALUES(?,?) "
                     "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
@@ -293,6 +300,7 @@ def load_state() -> None:
         LEAVES.update(json.loads(rows.get("leaves", "{}")))
         LEAF_FIXES.extend(json.loads(rows.get("leaf_fixes", "[]")))
         ENVIRONMENT.update(json.loads(rows.get("env", "{}")))
+        SCANS.extend(json.loads(rows.get("scans", "[]")))
         if PLANTS or POTS:
             print(f"[저장소] 식물 {len(PLANTS)}개 · 화분자리 {len(POTS)}개 · "
                   f"잎 {len(LEAVES)}장 불러옴 ({FARM_DB})")
@@ -1262,6 +1270,33 @@ def archive_photo(raw: bytes, tag: str = "scan") -> str:
     return rel.replace(os.sep, "/")
 
 
+PHOTO_KEEP = int(os.environ.get("PHOTO_KEEP", "60"))       # 화분 하나가 간직할 개체 사진 수
+
+
+def _add_plant_photo(plant: dict, rel: str, src: str = "plant") -> None:
+    """이 화분을 찍은 사진을 그 화분의 앨범에 넣는다.
+
+    화분마다 따로 쌓는 이유: 전체 탑뷰에서는 한 포기가 작게 나와 잎 모양을 볼 수
+    없다. 개체를 가까이 찍은 사진이 '이 포기가 그때 어땠나' 를 보여 주는 유일한
+    자료다. 전체 사진에 덮여 사라지면 안 된다.
+    """
+    if not rel:
+        return
+    album = plant.setdefault("photo_log", [])
+    album.append({"on": time.strftime("%Y-%m-%d %H:%M:%S"), "rel": rel, "src": src})
+    del album[:-PHOTO_KEEP]
+    plant["photo"] = rel                        # 최신 개체 사진 (모달 대표)
+
+
+def _add_scan_photo(rel: str, scan_id: str, n_plants: int) -> None:
+    """온실 전체 사진은 SCANS 에 한 번만 쌓는다 — 화분마다 복사하지 않는다."""
+    if not rel:
+        return
+    SCANS.append({"id": scan_id, "at": time.strftime("%Y-%m-%d %H:%M:%S"),
+                  "rel": rel, "plants": n_plants, "kind": "scan"})
+    del SCANS[:-SCAN_KEEP]
+
+
 def read_photo(rel: str) -> bytes:
     """보관한 원본을 읽는다. PHOTO_DIR 바깥은 절대 못 읽게 막는다."""
     if not rel or not PHOTO_DIR:
@@ -1414,7 +1449,7 @@ async def add_plant(name: str = Form(...), file: UploadFile = File(...), pos: st
 
     raw = await file.read()
     metrics, feat = _analyze_file(raw)
-    metrics["photo"] = archive_photo(raw, "plant")
+    rel = archive_photo(raw, "plant")
 
     pid = uuid.uuid4().hex[:8]
     plant = {"id": pid, "name": name, "pos": slot["label"], "x": slot["x"], "z": slot["z"], "rot": 0,
@@ -1490,7 +1525,6 @@ async def scan_farm(file: UploadFile = File(...), replace: str = Form(None),
     removed = _drop_orphans()      # 예전 화분 좌표로 만들어진 유령 정리
 
     scan_id = "sc_" + uuid.uuid4().hex[:8]
-    photo = archive_photo(raw, "scan")
     result = _register_groups(
         groups, space_w, space_h,
         feat_of=lambda g: _mean_features([leaf_features(image, b, box_to_px) for b in g
@@ -1501,12 +1535,14 @@ async def scan_farm(file: UploadFile = File(...), replace: str = Form(None),
         mode=scan_mode,
         cm_per_unit=(_W / space_w) if space_w else None,
         distance_correct=True,          # 한 장 탑뷰 — 카메라가 선반 가운데 위
-        photo=photo,
         verdicts=verdicts, scan_id=scan_id,
         leaf_extra_of=lambda b: {"bbox_px": [round(b["x1"] * box_to_px, 1),
                                              round(b["y1"] * box_to_px, 1),
                                              round(b["x2"] * box_to_px, 1),
                                              round(b["y2"] * box_to_px, 1)]})
+
+    # 전체 사진은 한 장이 여러 포기를 담는다 — 화분마다 복사하지 않고 여기 한 번.
+    _add_scan_photo(archive_photo(raw, "scan"), scan_id, len(result))
 
     shapes = {p.get("shape_group") for p in result if p.get("shape_group")}
     return {"count": len(result), "grouped_by": _grouped_by(boxes, slots),
@@ -1627,7 +1663,7 @@ def _register_groups(groups: List[List[dict]], space_w: float, space_h: float,
                      slot_of=None, mode: str = "update",
                      cm_per_unit: float = None, verdicts: dict = None,
                      scan_id: str = None, leaf_extra_of=None,
-                     distance_correct: bool = False, photo: str = "") -> List[dict]:
+                     distance_correct: bool = False) -> List[dict]:
     """무리 목록 → 자리 배정 후 등록/갱신. 스캔 엔드포인트들이 함께 쓴다.
 
     distance_correct 는 **한 장 탑뷰에서만** 켠다. 카메라가 선반 한가운데 위에
@@ -1712,8 +1748,6 @@ def _register_groups(groups: List[List[dict]], space_w: float, space_h: float,
             existing["x"], existing["z"] = round(px_cm, 2), round(pz_cm, 2)
             existing.update(metrics)
             existing["updated"] = now
-            if photo:
-                existing["photo"] = photo      # 한 장에서 나온 포기들이 같은 원본을 가리킨다
             _record_growth(existing)           # 덮어쓰기 전의 값도 이력에 남아 있다
             FEATS[existing["id"]] = feat
             if verdicts:
@@ -1724,8 +1758,6 @@ def _register_groups(groups: List[List[dict]], space_w: float, space_h: float,
             plant = {"id": pid, "name": f"식물 {slot['label']}", "pos": slot["label"],
                      "x": round(px_cm, 2), "z": round(pz_cm, 2), "rot": 0,
                      "updated": time.strftime("%Y-%m-%d %H:%M:%S"), **metrics}
-            if photo:
-                plant["photo"] = photo
             _record_growth(plant)              # 첫 측정도 이력의 시작점이 된다
             PLANTS[pid] = plant
             FEATS[pid] = feat
@@ -1894,9 +1926,9 @@ async def reanalyze(pid: str, file: UploadFile = File(...)):
         raise HTTPException(404, "없는 식물")
     raw = await file.read()
     metrics, feat = _analyze_file(raw)
-    metrics["photo"] = archive_photo(raw, "plant")
     PLANTS[pid].update(metrics)
     PLANTS[pid]["updated"] = time.strftime("%Y-%m-%d %H:%M:%S")
+    _add_plant_photo(PLANTS[pid], archive_photo(raw, "plant"))
     _record_growth(PLANTS[pid])
     FEATS[pid] = feat
     _recompute_shape_groups()
@@ -2088,6 +2120,21 @@ def get_photo(rel: str):
     return Response(read_photo(rel), media_type="image/jpeg")
 
 
+@app.get("/api/scans")
+def list_scans(limit: int = 60):
+    """온실 전체를 찍은 사진들 — 최근 것부터."""
+    rows = list(reversed(SCANS))[:max(1, min(limit, SCAN_KEEP))]
+    return {"count": len(SCANS), "rows": rows}
+
+
+@app.get("/api/plants/{pid}/photos")
+def list_plant_photos(pid: str):
+    """이 화분을 가까이 찍은 사진들 — 최근 것부터."""
+    if pid not in PLANTS:
+        raise HTTPException(404, "없는 식물")
+    return {"id": pid, "rows": list(reversed(PLANTS[pid].get("photo_log") or []))}
+
+
 @app.post("/api/plants/{pid}/rescan")
 def rescan_from_archive(pid: str):
     """새로 찍지 않고 **보관된 원본**을 다시 분석한다.
@@ -2097,7 +2144,8 @@ def rescan_from_archive(pid: str):
     """
     if pid not in PLANTS:
         raise HTTPException(404, "없는 식물")
-    rel = PLANTS[pid].get("photo")
+    album = PLANTS[pid].get("photo_log") or []
+    rel = album[-1]["rel"] if album else PLANTS[pid].get("photo")
     if not rel:
         raise HTTPException(400, "이 화분은 보관된 원본이 없어요. 사진을 새로 올려 주세요.")
     metrics, feat = _analyze_file(read_photo(rel))
