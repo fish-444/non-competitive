@@ -1097,33 +1097,99 @@ def assign_leaves(groups: List[List[dict]], slots: dict,
     return new_groups, new_slots, verdicts
 
 
+# 스캔 사이에 같은 잎으로 볼 최대 이동 거리(선반 정규좌표). 0.05 는 60cm 선반에서
+# 3cm 쯤이다. 잎은 자라고 바람에 흔들려 조금씩 움직이지만, 옆 잎으로 건너뛸 만큼은
+# 아니다. 너무 크게 잡으면 다른 잎으로 신원이 옮겨 붙는다.
+LEAF_MATCH_UV = float(os.environ.get("LEAF_MATCH_UV", "0.05"))
+
+
+def _match_leaves(old: List[dict], new_uv: List[tuple]) -> Dict[int, dict]:
+    """이전 잎 ↔ 이번에 잡힌 잎 짝짓기. {이번 잎 순번: 이전 기록}.
+
+    가까운 쌍부터 하나씩 확정하는 그리디다. 한 포기의 잎은 많아야 열몇 장이라
+    이걸로 충분하고, 서로 자리를 바꾸는 일도 없다.
+
+    짝을 못 찾은 잎은 새로 난 잎, 짝이 안 붙은 옛 기록은 떨어진 잎이다.
+    """
+    pairs = []
+    for i, (u, v) in enumerate(new_uv):
+        for o in old:
+            cu, cv = o.get("centroid_uv") or (None, None)
+            if cu is None:
+                continue
+            d = math.dist((u, v), (cu, cv))
+            if d <= LEAF_MATCH_UV:
+                pairs.append((d, i, o))
+    pairs.sort(key=lambda t: t[0])
+    taken_new, taken_old, out = set(), set(), {}
+    for _, i, o in pairs:
+        if i in taken_new or id(o) in taken_old:
+            continue
+        taken_new.add(i); taken_old.add(id(o)); out[i] = o
+    return out
+
+
+def _days_since(stamp: str):
+    """'YYYY-MM-DD ...' 에서 오늘까지 며칠. 못 읽으면 None."""
+    if not isinstance(stamp, str) or len(stamp) < 10:
+        return None
+    try:
+        return (date.today() - date.fromisoformat(stamp[:10])).days
+    except ValueError:
+        return None
+
+
 def _record_leaves(plant: dict, group: List[dict], verdicts: dict, scan_id: str,
                    cm_per_unit: float = None, extra_of=None) -> None:
-    """이 개체의 잎 낱개 기록을 새로 쓴다 (다른 개체 기록은 안 건드린다)."""
+    """이 개체의 잎 낱개 기록을 새로 쓴다 (다른 개체 기록은 안 건드린다).
+
+    같은 자리에 있던 잎은 **예전 leaf_id 를 그대로 물려받는다**. 예전에는 스캔할
+    때마다 새 id 를 뽑아서 '이 잎' 을 시간축으로 따라갈 수가 없었다 — 새순이
+    언제 성엽이 됐는지, 어떤 잎이 떨어졌는지 알 방법이 없었다.
+    """
     pid = plant["id"]
+    old = [v for v in LEAVES.values() if v.get("plant_id") == pid]
     for lid in [k for k, v in LEAVES.items() if v.get("plant_id") == pid]:
         del LEAVES[lid]
-    ids = []
-    for i, b in enumerate(_leaves_of(group)):
-        verdict = verdicts.get(id(b))
-        if verdict is None:
-            continue
-        lid = "lf_" + uuid.uuid4().hex[:8]
+
+    leaves = [b for b in _leaves_of(group) if verdicts.get(id(b)) is not None]
+    new_uv = [tuple(verdicts[id(b)]["centroid_uv"]) for b in leaves]
+    matched = _match_leaves(old, new_uv)
+
+    now = time.strftime("%Y-%m-%d %H:%M:%S")
+    ids, fresh = [], []
+    for i, b in enumerate(leaves):
+        verdict = verdicts[id(b)]
+        was = matched.get(i)
+        stage = _stage(b["cls"])
+        lid = was["leaf_id"] if was else "lf_" + uuid.uuid4().hex[:8]
         rec = {"leaf_id": lid, "scan_id": scan_id, "mask_id": b.get("mask_id", i),
                "plant_id": pid, "pot_slot": verdict["pot_slot"],
-               "stage": _stage(b["cls"]), "centroid_uv": verdict["centroid_uv"],
+               "stage": stage, "centroid_uv": verdict["centroid_uv"],
                "long_side_cm": (round(_leaf_long_side(b) * cm_per_unit, 1)
                                 if cm_per_unit else None),
                "conf": round(float(b.get("conf", 0) or 0), 3),
                "ambiguous": verdict["ambiguous"], "manual": verdict["manual"],
                "assign": {"nearest": verdict["nearest"], "second": verdict["second"],
-                          "margin": verdict["margin"]}}
+                          "margin": verdict["margin"]},
+               "first_seen": (was or {}).get("first_seen") or now,
+               "last_seen": now,
+               "seen": ((was or {}).get("seen") or 0) + 1,
+               # 지금 단계가 언제부터인지 — 새순이 언제 성엽이 됐는지가 여기서 나온다
+               "stage_since": (was["stage_since"] if was and was.get("stage") == stage
+                               and was.get("stage_since") else now)}
         if extra_of:
             rec.update(extra_of(b) or {})
         LEAVES[lid] = rec
         ids.append(lid)
+        if was is None:
+            fresh.append(lid)
+
     plant["leaf_ids"] = ids
     plant["ambiguous_ids"] = [i for i in ids if LEAVES[i]["ambiguous"]]
+    plant["new_leaf_ids"] = fresh
+    plant["gone_leaf_ids"] = [o["leaf_id"] for o in old
+                              if o["leaf_id"] not in set(ids)]
 
 
 def _forget_leaves(pid: str) -> None:
@@ -2302,6 +2368,31 @@ def rescan_from_archive(pid: str):
     _record_growth(PLANTS[pid], src="rescan")
     save_state()
     return PLANTS[pid]
+
+
+@app.get("/api/plants/{pid}/leaves")
+def plant_leaves(pid: str):
+    """이 화분 잎들의 나이와 단계 — 언제부터 있었고 지금 단계가 언제부터인지.
+
+    잎마다 id 가 스캔 사이에 유지되므로(_match_leaves) '이 잎' 을 따라갈 수 있다.
+    """
+    if pid not in PLANTS:
+        raise HTTPException(404, "없는 식물")
+    rows = []
+    for lid in (PLANTS[pid].get("leaf_ids") or []):
+        r = LEAVES.get(lid)
+        if not r:
+            continue
+        rows.append({"leaf_id": lid, "stage": r.get("stage"),
+                     "first_seen": r.get("first_seen"), "seen": r.get("seen"),
+                     "stage_since": r.get("stage_since"),
+                     "long_side_cm": r.get("long_side_cm"),
+                     "days_old": _days_since(r.get("first_seen")),
+                     "days_in_stage": _days_since(r.get("stage_since"))})
+    rows.sort(key=lambda r: (r["first_seen"] or ""))
+    return {"id": pid, "rows": rows,
+            "new": PLANTS[pid].get("new_leaf_ids") or [],
+            "gone": PLANTS[pid].get("gone_leaf_ids") or []}
 
 
 @app.get("/api/plants/{pid}/history")

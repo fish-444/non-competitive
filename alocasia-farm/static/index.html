@@ -281,6 +281,7 @@
          바깥 블록으로 빼고, 물주기 줄만 flex 로 남긴다. -->
     <div style="margin:2px 0 0;background:#1a2620;border-radius:9px 9px 0 0;padding:9px 12px 0">
       <div id="mPhotos" style="margin-bottom:8px"></div>
+      <div id="mLeafAge" style="margin-bottom:8px"></div>
       <div id="mGrowth" style="font-size:12px;color:#cfe0d4;margin-bottom:8px"></div>
     </div>
     <div style="margin:0 0 13px;display:flex;align-items:center;justify-content:space-between;gap:10px;
@@ -1211,7 +1212,7 @@ function openModal(p){
     (p.size_class==='미검출'?'이 화분은 잎이 잡히지 않았어요 — 아래에서 직접 넣어 주세요 · ':'')
     + (p.updated?('최근 분석: '+p.updated):'');
   const rv=p.rot||0; document.getElementById('mRot').value=rv; document.getElementById('mRotV').textContent=rv+'°';
-  drawGrowth(p.id); drawPlantPhotos(p.id);
+  drawGrowth(p.id); drawPlantPhotos(p.id); drawLeafAge(p.id);
   const wi=document.getElementById('mWaterInfo');
   document.querySelectorAll('#mSoilPick button').forEach(b=>
     b.setAttribute('aria-pressed', b.dataset.soil===(p.soil||'일반') ? 'true':'false'));
@@ -1246,6 +1247,37 @@ document.getElementById('mNote').addEventListener('change',async()=>{
   info.textContent='✅ 저장됨';
 });
 // 물 주기 — 센서가 없으니 사람이 준 날짜만 기록하고, 며칠 지났는지로 마름 위험을 보여준다
+// 잎 낱개 나이 — 스캔 사이에 같은 자리 잎은 id 를 물려받으므로 '이 잎' 을 따라갈 수 있다.
+// STAGE_KO 는 위(잎 애매판정 목록)에서 이미 선언했다 — 여기서 다시 선언하면
+// 같은 스코프라 스크립트 전체가 죽는다. 색만 새로 둔다.
+const STAGE_BG={shoot:'#2f5e2a', mature:'#2a4d33', old:'#4d4522'};
+async function drawLeafAge(pid){
+  const box=document.getElementById('mLeafAge'); if(!box) return;
+  box.innerHTML='';
+  let d={rows:[]};
+  try{ d=await(await fetch(`/api/plants/${pid}/leaves`)).json(); }catch(e){ return; }
+  const rows=d.rows||[];
+  if(!rows.length){
+    box.innerHTML='<span style="color:#6f8073;font-size:11px">🌿 잎 나이 — 스캔하면 잎마다 '
+      +'따로 기록됩니다</span>';
+    return;
+  }
+  const chip=r=>{
+    const ko=STAGE_KO[r.stage]||r.stage||'잎';
+    const age=(r.days_old==null)?'':(r.days_old===0?'오늘':`${r.days_old}일`);
+    const inS=(r.days_in_stage==null||r.days_in_stage===r.days_old)?''
+      :` · ${ko} ${r.days_in_stage}일째`;
+    return `<span style="display:inline-block;font-size:10px;padding:2px 7px;border-radius:20px;
+      background:${STAGE_BG[r.stage]||'#26332b'};color:#dfeee4;margin:2px 3px 0 0">
+      ${ko}${age?' '+age:''}${inS}${r.long_side_cm?` · ${r.long_side_cm}cm`:''}</span>`;
+  };
+  const fresh=(d.new||[]).length, gone=(d.gone||[]).length;
+  box.innerHTML=`<div style="font-size:11px;color:#9fb4a6;margin-bottom:3px">🌿 <b>잎 나이</b> `
+    +`<span style="color:#6f8073">${rows.length}장`
+    +(fresh?` · 새 잎 ${fresh}`:'')+(gone?` · 사라짐 ${gone}`:'')+`</span></div>`
+    + rows.map(chip).join('');
+}
+
 // 측정 이력 — 스캔할 때마다 한 줄씩 쌓인 크기·잎 수를 작은 그래프로.
 // /api/plants 에 안 싣고 따로 받는다(화분 50개 × 400일이면 목록이 느려진다).
 async function drawGrowth(pid){
