@@ -1661,6 +1661,7 @@ def _register_groups(groups: List[List[dict]], space_w: float, space_h: float,
             existing["x"], existing["z"] = round(px_cm, 2), round(pz_cm, 2)
             existing.update(metrics)
             existing["updated"] = now
+            _record_growth(existing)           # 덮어쓰기 전의 값도 이력에 남아 있다
             FEATS[existing["id"]] = feat
             if verdicts:
                 _record_leaves(existing, g, verdicts, scan_id, scale, leaf_extra_of)
@@ -1670,6 +1671,7 @@ def _register_groups(groups: List[List[dict]], space_w: float, space_h: float,
             plant = {"id": pid, "name": f"식물 {slot['label']}", "pos": slot["label"],
                      "x": round(px_cm, 2), "z": round(pz_cm, 2), "rot": 0,
                      "updated": time.strftime("%Y-%m-%d %H:%M:%S"), **metrics}
+            _record_growth(plant)              # 첫 측정도 이력의 시작점이 된다
             PLANTS[pid] = plant
             FEATS[pid] = feat
             by_slot[slot["label"]] = plant
@@ -1862,6 +1864,35 @@ WATER_DRY_DAYS = int(os.environ.get("WATER_DRY_DAYS", "3"))    # 이 일수를 �
 
 WATER_LOG_DAYS = int(os.environ.get("WATER_LOG_DAYS", "400"))  # 달력 1년치 남짓
 
+# 개체별 측정 이력으로 남길 최대 건수. 하루 한 건으로 줄여 담으므로 날짜 수와 같다.
+GROWTH_LOG_DAYS = int(os.environ.get("GROWTH_LOG_DAYS", "400"))
+
+# 이력에 남길 값들. 나머지(겹침·단계별 잎 수 등)는 그때그때 다시 잴 수 있고,
+# 다 남기면 farm.db 만 무거워진다. 크기와 잎 수가 '얼마나 자랐나' 의 전부다.
+GROWTH_FIELDS = ("canopy_cm", "leaf_max_cm", "leaf_count", "size_class")
+
+
+def _record_growth(plant: dict, src: str = "scan") -> None:
+    """지금 측정값을 개체 이력에 한 줄 남긴다.
+
+    이걸 안 하면 스캔할 때마다 existing.update(metrics) 가 직전 측정을 덮어써서,
+    '지난달보다 얼마나 컸나' 에 답할 수가 없다. 물 준 날은 남기면서 크기는 안
+    남기고 있었다.
+
+    하루에 여러 번 스캔해도 그날 한 줄만 남긴다(마지막 것으로 갱신). 같은 날
+    같은 포기를 세 번 찍었다고 이력이 세 줄이 되면 추이를 읽기 어렵다.
+    """
+    today = date.today().isoformat()
+    row = {"on": today, "src": src}
+    row.update({k: plant.get(k) for k in GROWTH_FIELDS})
+
+    log = plant.setdefault("growth_log", [])
+    if log and log[-1].get("on") == today:
+        log[-1] = row                       # 그날 마지막 측정으로 갱신
+    else:
+        log.append(row)
+    del log[:-GROWTH_LOG_DAYS]
+
 
 def _augment_water(p: dict) -> None:
     """물 준 지 며칠째인지 + 마름 위험 여부를 얹는다. last_watered 가 없으면 '기록 없음'."""
@@ -1993,6 +2024,26 @@ def unwater_all_plants(day: str):
     return {"ok": True, "undone": undone, "date": when}
 
 
+@app.get("/api/plants/{pid}/history")
+def plant_history(pid: str):
+    """개체의 측정 이력 — 얼마나 자랐는지 보는 데 쓴다.
+
+    /api/plants 에 실어 보내지 않고 따로 둔다. 화분 50개 × 400일이면 목록
+    한 번 부를 때마다 수만 줄이 따라와서, 정작 필요한 목록이 느려진다.
+    """
+    if pid not in PLANTS:
+        raise HTTPException(404, "없는 식물")
+    log = PLANTS[pid].get("growth_log") or []
+    first, last = (log[0] if log else None), (log[-1] if log else None)
+    grew = None
+    if first and last and first is not last:
+        a, b = first.get("canopy_cm"), last.get("canopy_cm")
+        if a and b:
+            grew = round(b - a, 1)
+    return {"id": pid, "rows": log, "grew_cm": grew,
+            "since": first.get("on") if first else None}
+
+
 @app.get("/api/water-log")
 def water_log(month: str = None):
     """날짜별로 몇 개 화분에 물을 줬는지 — 달력에 점으로 찍는 데 쓴다.
@@ -2101,6 +2152,8 @@ async def update_plant(pid: str, name: str = Form(None), rot: float = Form(None)
                 p["size_class"] = "소품"      # '미검출'로는 등급 배지·3D 크기를 못 정한다
         p["manual"] = True
         p["updated"] = time.strftime("%Y-%m-%d %H:%M:%S")
+        # 손으로 고친 값이 오히려 정답에 가깝다 — 이력에도 남긴다(src 로 구분).
+        _record_growth(p, src="manual")
     save_state()
     return p
 

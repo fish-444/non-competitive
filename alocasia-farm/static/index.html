@@ -252,6 +252,7 @@
     </div>
     <div style="margin:2px 0 13px;display:flex;align-items:center;justify-content:space-between;gap:10px;
       background:#1a2620;border-radius:9px;padding:9px 12px">
+      <div id="mGrowth" style="font-size:12px;color:#cfe0d4;width:100%;margin-bottom:8px"></div>
       <div style="font-size:12px;color:#cfe0d4">💧 <b>물 상태</b> — <span id="mWaterInfo">–</span></div>
       <button type="button" class="mbtn" id="mWaterBtn" style="flex:none;padding:8px 14px">물 줬어요</button>
     </div>
@@ -1116,6 +1117,7 @@ function openModal(p){
     (p.size_class==='미검출'?'이 화분은 잎이 잡히지 않았어요 — 아래에서 직접 넣어 주세요 · ':'')
     + (p.updated?('최근 분석: '+p.updated):'');
   const rv=p.rot||0; document.getElementById('mRot').value=rv; document.getElementById('mRotV').textContent=rv+'°';
+  drawGrowth(p.id);
   const wi=document.getElementById('mWaterInfo');
   document.querySelectorAll('#mSoilPick button').forEach(b=>
     b.setAttribute('aria-pressed', b.dataset.soil===(p.soil||'일반') ? 'true':'false'));
@@ -1150,6 +1152,36 @@ document.getElementById('mNote').addEventListener('change',async()=>{
   info.textContent='✅ 저장됨';
 });
 // 물 주기 — 센서가 없으니 사람이 준 날짜만 기록하고, 며칠 지났는지로 마름 위험을 보여준다
+// 측정 이력 — 스캔할 때마다 한 줄씩 쌓인 크기·잎 수를 작은 그래프로.
+// /api/plants 에 안 싣고 따로 받는다(화분 50개 × 400일이면 목록이 느려진다).
+async function drawGrowth(pid){
+  const box=document.getElementById('mGrowth'); box.innerHTML='';
+  let d={rows:[]};
+  try{ d=await(await fetch(`/api/plants/${pid}/history`)).json(); }catch(e){ return; }
+  const rows=(d.rows||[]).filter(r=>r.canopy_cm!=null||r.leaf_count!=null);
+  if(rows.length<2){
+    box.innerHTML='<span style="color:#6f8073">📈 <b>성장</b> — 기록이 쌓이면 여기 그래프가 그려집니다'
+      +(rows.length?' (지금 1회)':'')+'</span>';
+    return;
+  }
+  const spark=(vals,color)=>{
+    const ok=vals.filter(v=>v!=null); if(ok.length<2) return '';
+    const lo=Math.min(...ok), hi=Math.max(...ok), sp=(hi-lo)||1, W=120, H=26;
+    const pts=vals.map((v,i)=>v==null?null:
+      `${(i/(vals.length-1)*W).toFixed(1)},${(H-(v-lo)/sp*H).toFixed(1)}`).filter(Boolean).join(' ');
+    return `<svg width="${W}" height="${H}" style="vertical-align:middle">
+      <polyline points="${pts}" fill="none" stroke="${color}" stroke-width="1.5"/></svg>`;
+  };
+  const cm=rows.map(r=>r.canopy_cm), lf=rows.map(r=>r.leaf_count);
+  const grew=d.grew_cm;
+  const arrow = grew==null?'':(grew>0?`<span style="color:#7ddb9a">▲ ${grew}cm</span>`
+              :(grew<0?`<span style="color:#e8a64a">▼ ${-grew}cm</span>`:'<span style="color:#6f8073">변화 없음</span>'));
+  box.innerHTML=`📈 <b>성장</b> — ${d.since} 부터 ${rows.length}회 측정 ${arrow}`
+    +`<div style="display:flex;gap:14px;align-items:center;margin-top:4px;font-size:10px;color:#6f8073">`
+    +`<span>포기 ${spark(cm,'#7ddb9a')} ${rows[rows.length-1].canopy_cm??'–'}cm</span>`
+    +`<span>잎 ${spark(lf,'#8fb3d9')} ${rows[rows.length-1].leaf_count??'–'}장</span></div>`;
+}
+
 document.getElementById('mWaterBtn').addEventListener('click',async()=>{
   if(!modalId)return;
   const r=await fetch('/api/plants/'+modalId+'/water',{method:'POST'});
