@@ -1876,7 +1876,8 @@ def _augment_water(p: dict) -> None:
     # 다음 예정일 — 형이 준 간격과 프로필을 섞어 낸다(watering.recommend).
     # soil_dry 도 고정 3일이 아니라 그 포기의 예정일을 넘겼는지로 본다.
     rec = watering.recommend(p)
-    p.update({k: rec[k] for k in ("next_water", "days_until", "interval_days", "basis")})
+    p.update({k: rec[k] for k in ("next_water", "days_until", "interval_days",
+                                  "basis", "soil", "own_interval_days")})
     p["soil_dry"] = bool(rec["overdue"] or (rec["next_water"] is None
                                             and days is not None and days > WATER_DRY_DAYS))
 
@@ -2043,7 +2044,7 @@ def grade_by_canopy_cm(canopy_cm: float) -> str:
 async def update_plant(pid: str, name: str = Form(None), rot: float = Form(None),
                        note: str = Form(None), size_class: str = Form(None),
                        shoot_count: int = Form(None), mature_count: int = Form(None),
-                       old_count: int = Form(None)):
+                       old_count: int = Form(None), soil: str = Form(None)):
     """이름 · 화분 방향 · 메모 · 그리고 사람이 직접 고치는 값들.
 
     사진이 뭉개지거나 잎이 가려지면 탐지가 틀립니다. 그럴 때 손으로 바로잡으라고
@@ -2064,6 +2065,16 @@ async def update_plant(pid: str, name: str = Form(None), rot: float = Form(None)
         p["note"] = note.strip()
 
     touched = False
+    # Form(None) 기본값은 파이썬에서 직접 부르면 None 이 아니라 FieldInfo 로 온다.
+    # (_water_date 에서 같은 문제를 겪었다) 그래서 타입으로 거른다.
+    if isinstance(soil, str):
+        # 흙이 마르는 속도 — 물주기 예정일을 하루 당기거나 미룬다.
+        # 탐지값을 고치는 게 아니라 화분의 성질을 적는 것이라 manual 표시와 무관하다.
+        if soil not in watering.SOIL_ADJUST:
+            raise HTTPException(400, f"흙 상태는 {'/'.join(watering.SOIL_ADJUST)} 중 하나예요.")
+        p["soil"] = soil
+        _augment_water(p)
+
     if size_class is not None:
         if size_class not in SIZE_CLASSES:
             raise HTTPException(400, f"크기 등급은 {' / '.join(SIZE_CLASSES)} 중 하나여야 해요.")

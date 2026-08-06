@@ -2,8 +2,8 @@
 
 실행:  python3 test_watering.py
 
-핵심은 '내 기록'과 '프로필'을 기록 수로 저울질하는 부분이다. 기록이 없으면
-프로필대로, 쌓이면 내 리듬으로 옮겨가야 한다.
+기준은 프로필(그 달의 값)이고, 흙 상태로 하루씩 당기거나 미룬다. 예정일은
+마지막으로 준 날에서만 센다 — 과거 기록을 평균 내지 않는다.
 """
 
 import os
@@ -20,34 +20,59 @@ def plant(log, last=None):
     return {"water_log": list(log), "last_watered": last or (log[-1] if log else None)}
 
 
-def test_no_records_falls_back_to_the_profile():
-    """한 번도 안 준 포기는 기댈 게 프로필뿐이다."""
-    got, why = watering.blended_interval([], date(2026, 8, 5), PROF)
+def test_the_profile_is_the_baseline():
+    """기준은 프로필 — 과거 기록을 평균 내지 않는다."""
+    got, why = watering.plan_interval(plant([]), date(2026, 8, 5), PROF)
     assert got == 3, got                         # 8월은 by_month 가 이긴다
     assert "테스트 프로필" in why, why
 
 
 def test_a_month_without_its_own_number_uses_the_base():
-    got, _ = watering.blended_interval([], date(2026, 1, 5), PROF)
+    got, _ = watering.plan_interval(plant([]), date(2026, 1, 5), PROF)
     assert got == 6, got
 
 
 def test_without_any_profile_it_uses_the_fallback():
-    got, why = watering.blended_interval([], date(2026, 8, 5), {})
+    got, why = watering.plan_interval(plant([]), date(2026, 8, 5), {})
     assert got == watering.FALLBACK_DAYS, got
-    assert why == "기본값", why
+    assert "기본값" in why, why
 
 
-def test_own_rhythm_takes_over_as_records_pile_up():
-    """기록이 늘수록 프로필에서 멀어지고 내 간격으로 수렴해야 한다."""
-    when = date(2026, 8, 20)
-    few = plant(["2026-08-01", "2026-08-09"])                   # 8일 간격 1개
-    many = plant([f"2026-08-{d:02d}" for d in range(1, 20, 8)]  # 8일 간격 여러 개
-                 + ["2026-09-05", "2026-09-13", "2026-10-01", "2026-10-09"])
-    a, _ = watering.blended_interval(few["water_log"], when, PROF)
-    b, _ = watering.blended_interval(many["water_log"], when, PROF)
-    assert 3 < a < 8, a                          # 프로필 3 과 내 간격 8 사이
-    assert a < b < 8, (a, b)                     # 기록이 많을수록 8 에 가까워진다
+def test_past_records_never_move_the_interval():
+    """8일 간격으로 오래 줘 왔어도 간격은 프로필대로다 — 누적 평균이 아니다."""
+    long_history = plant([f"2026-06-{d:02d}" for d in range(1, 30, 8)]
+                         + ["2026-07-05", "2026-07-13", "2026-07-21"])
+    a, _ = watering.plan_interval(plant([]), date(2026, 8, 20), PROF)
+    b, _ = watering.plan_interval(long_history, date(2026, 8, 20), PROF)
+    assert a == b == 3, (a, b)
+
+
+def test_the_soil_choice_moves_it_one_day_each_way():
+    when = date(2026, 8, 5)                      # 프로필 3일
+    dry, _ = watering.plan_interval({"soil": "건조"}, when, PROF)
+    mid, _ = watering.plan_interval({"soil": "일반"}, when, PROF)
+    wet, _ = watering.plan_interval({"soil": "과습"}, when, PROF)
+    assert (dry, mid, wet) == (2, 3, 4), (dry, mid, wet)
+
+
+def test_an_unknown_soil_value_is_treated_as_normal():
+    assert watering.soil_of({"soil": "아무거나"}) == "일반"
+    assert watering.soil_of({}) == "일반"
+    assert watering.soil_of(None) == "일반"
+
+
+def test_the_soil_choice_shows_up_in_the_reason():
+    _, why = watering.plan_interval({"soil": "과습"}, date(2026, 8, 5), PROF)
+    assert "과습" in why and "+1" in why, why
+
+
+def test_my_own_interval_is_reported_but_not_used():
+    """실제로 준 간격은 비교용으로만 보여 준다 — 계산에는 안 들어간다."""
+    p = plant(["2026-08-01", "2026-08-09", "2026-08-17"])        # 8일 간격
+    r = watering.recommend(p, date(2026, 8, 18), PROF)
+    assert r["own_interval_days"] == 8.0, r
+    assert r["interval_days"] == 3, r                            # 프로필 그대로
+    assert r["next_water"] == "2026-08-20", r                    # 8/17 + 3
 
 
 def test_same_day_written_twice_is_not_a_zero_gap():
@@ -66,8 +91,15 @@ def test_broken_dates_are_skipped():
 def test_next_date_counts_from_the_last_watering():
     p = plant(["2026-08-01", "2026-08-04", "2026-08-07"])
     r = watering.recommend(p, date(2026, 8, 8), PROF)
-    assert r["next_water"] == "2026-08-10", r     # 3일 간격 → 8/7 + 3
+    assert r["next_water"] == "2026-08-10", r     # 마지막 8/7 + 프로필 3일
     assert r["days_until"] == 2 and not r["overdue"], r
+
+
+def test_the_last_watering_is_what_counts_not_the_older_ones():
+    """예전에 드문드문 줬어도, 다음 날짜는 마지막으로 준 날에서 센다."""
+    p = plant(["2026-05-01", "2026-06-20", "2026-08-07"])
+    r = watering.recommend(p, date(2026, 8, 8), PROF)
+    assert r["next_water"] == "2026-08-10", r
 
 
 def test_a_plant_past_its_date_is_flagged():

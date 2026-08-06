@@ -59,7 +59,8 @@ def _plant(**kw):
 
 def _patch(**kw):
     args = {"name": None, "rot": None, "note": None, "size_class": None,
-            "shoot_count": None, "mature_count": None, "old_count": None}
+            "shoot_count": None, "mature_count": None, "old_count": None,
+            "soil": None}
     args.update(kw)
     return asyncio.run(main.update_plant(pid="t1", **args))
 
@@ -498,6 +499,27 @@ def test_soil_turns_dry_the_day_after_the_threshold():
         main._augment_water(p)
         assert p["soil_dry"] is True
     _without_profile(body)
+    _reset()
+
+
+def test_soil_choice_moves_the_next_watering_by_a_day():
+    """흙이 빨리 마르는 화분은 하루 일찍, 잘 안 마르는 화분은 하루 늦게."""
+    _plant(last_watered=date.today().isoformat())
+    dry = _patch(soil="건조")["next_water"]
+    _plant(last_watered=date.today().isoformat())
+    wet = _patch(soil="과습")["next_water"]
+    assert dry < wet, (dry, wet)
+    _reset()
+
+
+def test_a_bogus_soil_value_is_rejected():
+    _plant()
+    try:
+        _patch(soil="촉촉")
+    except HTTPException as e:
+        assert e.status_code == 400
+    else:
+        raise AssertionError("모르는 흙 상태는 거부해야 한다")
     _reset()
 
 

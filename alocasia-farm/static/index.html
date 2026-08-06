@@ -222,6 +222,14 @@
     </div>
 
     <div style="font-size:11px;color:#9fb4a6;margin:11px 0 5px">
+      흙 마름 — 물주기 예정일을 <b style="color:#cfe0d4">하루 당기거나 미룹니다</b></div>
+    <div class="szrow" id="mSoilPick">
+      <button type="button" data-soil="건조">빨리 마름</button>
+      <button type="button" data-soil="일반">보통</button>
+      <button type="button" data-soil="과습">잘 안 마름</button>
+    </div>
+
+    <div style="font-size:11px;color:#9fb4a6;margin:11px 0 5px">
       잎 개수 — <b style="color:#cfe0d4">−/+</b> 로 고치세요 (성엽 −1, 노엽 +1 = 단계 이동)
     </div>
     <div class="grid">
@@ -1109,9 +1117,21 @@ function openModal(p){
     + (p.updated?('최근 분석: '+p.updated):'');
   const rv=p.rot||0; document.getElementById('mRot').value=rv; document.getElementById('mRotV').textContent=rv+'°';
   const wi=document.getElementById('mWaterInfo');
+  document.querySelectorAll('#mSoilPick button').forEach(b=>
+    b.setAttribute('aria-pressed', b.dataset.soil===(p.soil||'일반') ? 'true':'false'));
   if(p.days_since_watered==null) wi.innerHTML='기록 없음';
-  else wi.innerHTML=`물 준 지 <b style="color:${p.soil_dry?'#e8a64a':'#7ddb9a'}">${p.days_since_watered}일째</b>`
-    +(p.soil_dry?' · ⚠️ 흙 마름 위험':'');
+  else{
+    let t=`물 준 지 <b style="color:${p.soil_dry?'#e8a64a':'#7ddb9a'}">${p.days_since_watered}일째</b>`
+      +(p.soil_dry?' · ⚠️ 흙 마름 위험':'');
+    if(p.next_water){
+      const d=p.days_until;
+      const when = d>0?`${d}일 뒤`:(d===0?'오늘':`${-d}일 지남`);
+      t+=`<br><span style="color:#8fb3d9">다음 물주기 ${p.next_water} (${when})</span>`;
+    }
+    if(p.basis) t+=`<br><span style="font-size:10px;color:#6f8073">${p.basis}`
+      +(p.own_interval_days?` · 실제 평균 ${p.own_interval_days}일`:'')+`</span>`;
+    wi.innerHTML=t;
+  }
   document.getElementById('mMoveInfo').textContent='';
   populateMoveSelect(p);
   document.getElementById('mNote').value=p.note||'';
@@ -1310,6 +1330,9 @@ async function patchPlant(fields){
 // 크기 등급
 document.querySelectorAll('#mSizePick button').forEach(b=>
   b.addEventListener('click',()=>patchPlant({size_class:b.dataset.sz})));
+// 흙 마름 — 예정일을 하루 당기거나 미룬다
+document.querySelectorAll('#mSoilPick button').forEach(b=>
+  b.addEventListener('click',()=>patchPlant({soil:b.dataset.soil})));
 // 잎 −/+ (성엽 −1 · 노엽 +1 로 단계 이동)
 document.querySelectorAll('.cnt button').forEach(b=>b.addEventListener('click',()=>{
   if(!modalId)return;

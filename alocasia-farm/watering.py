@@ -3,32 +3,34 @@
 지금까지 물주기는 '준 날을 적는 것'뿐이었고, 판단이라곤 WATER_DRY_DAYS(기본 3일)
 하나를 넘겼는지 보는 게 전부였다. 그 3이라는 숫자에는 근거가 없다.
 
-여기서는 두 가지를 섞는다.
+계산은 두 줄이면 끝난다.
 
-  1. **형이 실제로 준 간격** — 이 온실, 이 포기의 진짜 리듬이다. 가장 믿을 만하다.
-     다만 기록이 적을 때는 우연에 휘둘린다(두 번 준 게 마침 8일 간격이면 8일이
-     되어 버린다).
-  2. **품종·계절 프로필** — 외부 자료에서 온 '보통 이 정도' 값. 기록이 없을 때
-     기댈 곳이고, 기록이 적을 때 극단으로 튀는 걸 잡아 준다.
+    간격     = 프로필(그 달) + 흙 상태 보정(-1 / 0 / +1)
+    예정일   = 마지막으로 준 날 + 간격
 
-둘을 어떻게 섞느냐가 핵심이다. 기록 수 n 이 늘수록 형의 리듬 쪽으로 옮겨간다:
+**기준은 프로필**(관수 데이터에서 뽑은 그 달의 값)이고, 화분마다 흙이 마르는
+속도가 다른 것은 하루씩 당기거나 미뤄서 맞춘다. 화분 크기·흙 배합·놓인 자리에
+따라 실제로 하루 정도씩 갈리는데, 그걸 사람이 보고 고르는 게 제일 정확하다.
 
-    간격 = (n × 내_중앙값 + PRIOR × 프로필) / (n + PRIOR)
+예정일은 **마지막으로 준 날**에서만 센다. 과거 기록 전체를 평균 내지 않는다 —
+지난달에 며칠 간격으로 줬든, 다음에 언제 줘야 하는지는 마지막으로 준 날이
+기준이어야 한다.
 
-기록이 0이면 순수하게 프로필, 기록이 쌓이면 프로필의 영향이 자연히 사라진다.
-"어느 쪽을 쓸까" 를 고르는 대신 저울질하게 만든 것이라, 자료가 늘어도 코드를
-안 고쳐도 된다.
+형이 실제로 준 간격은 계산에 넣지 않고 **비교용으로 보여만 준다**. 프로필과
+많이 다르면 프로필을 고치거나 흙 상태를 바꾸라는 신호다.
 """
 
 import json
 import os
 import statistics
 from datetime import date, timedelta
-from typing import List, Optional
+from typing import List
 
-# 프로필을 얼마나 세게 믿을지. 이 숫자만큼의 '가상 기록'으로 친다.
-# 3 이면 실제로 세 번 준 시점에 내 기록과 프로필이 반반이 된다.
-PRIOR_STRENGTH = float(os.environ.get("WATER_PRIOR", "3"))
+# 흙이 마르는 속도 — 화분마다 다르다. 프로필 값에서 며칠을 더하거나 뺄지.
+# 데이터셋이 관수 환경을 건조/일반/과습으로 나눈 것과 같은 이름을 쓴다.
+SOIL_ADJUST = {"건조": -1, "일반": 0, "과습": +1}
+SOIL_DEFAULT = "일반"
+SOIL_LABEL = {"건조": "빨리 마름", "일반": "보통", "과습": "잘 안 마름"}
 
 # 프로필도 기록도 없을 때 쓸 최후의 값.
 # main.WATER_DRY_DAYS 의 기본값과 일부러 같게 뒀다. 이 기능을 켠다고 기존 마름
@@ -45,8 +47,7 @@ PROFILE_PATH = os.environ.get("WATER_PROFILE", "water_profile.json")
 # ⚠ 아래 달별 값은 원예 통념에서 잡은 **잠정값**이지 데이터셋에서 뽑은 수치가
 #   아니다. AI Hub '원예식물(화분류) 물주기 생육 데이터' 에서 습생·거실 조건의
 #   실제 관수 간격을 계산해 water_profile.json 으로 덮어쓰면 이 값은 안 쓰인다.
-#   어차피 기록이 몇 번 쌓이면 형의 실제 리듬 쪽으로 옮겨가므로(blended_interval),
-#   이 값이 정확하지 않아도 시간이 지나면 영향이 사라진다.
+#   화분마다 다른 부분은 흙 상태(건조/일반/과습)로 하루씩 맞춘다.
 DEFAULT_PROFILE = {
     "source": "잠정값 (습생·거실)",
     "provisional": True,
@@ -122,22 +123,24 @@ def own_intervals(log: List[str]) -> List[float]:
     return [float(g) for g in gaps if MIN_INTERVAL <= g <= MAX_INTERVAL]
 
 
-def blended_interval(log: List[str], when: date, profile: dict = None) -> tuple:
-    """(간격, 근거설명) — 내 기록과 프로필을 기록 수로 저울질해 섞는다."""
-    prof = profile_interval(when, profile)
-    gaps = own_intervals(log)
-    if not gaps:
-        src = (PROFILE if profile is None else profile).get("source")
-        return prof, (f"{src} 기준" if src else "기본값")
+def soil_of(plant: dict) -> str:
+    """그 화분에 지정된 흙 상태. 안 골랐으면 '일반'."""
+    v = (plant or {}).get("soil")
+    return v if v in SOIL_ADJUST else SOIL_DEFAULT
 
-    mine = statistics.median(gaps)
-    n = len(gaps)
-    mixed = (n * mine + PRIOR_STRENGTH * prof) / (n + PRIOR_STRENGTH)
-    if n >= 6:
-        why = f"내 기록 {n}회 (중앙값 {mine:.0f}일)"
-    else:
-        why = f"내 기록 {n}회 (중앙값 {mine:.0f}일) + 프로필 {prof:.0f}일"
-    return mixed, why
+
+def plan_interval(plant: dict, when: date, profile: dict = None) -> tuple:
+    """(간격, 근거설명) — 프로필에 흙 상태만큼 더하거나 뺀다."""
+    prof = profile_interval(when, profile)
+    soil = soil_of(plant)
+    adj = SOIL_ADJUST[soil]
+    interval = max(MIN_INTERVAL, min(MAX_INTERVAL, prof + adj))
+
+    src = (PROFILE if profile is None else profile).get("source") or "기본값"
+    why = f"{src} {prof:.0f}일"
+    if adj:
+        why += f" {adj:+d}일 (흙 {soil}·{SOIL_LABEL[soil]})"
+    return interval, why
 
 
 def recommend(plant: dict, today: date = None, profile: dict = None) -> dict:
@@ -149,10 +152,14 @@ def recommend(plant: dict, today: date = None, profile: dict = None) -> dict:
     today = today or date.today()
     log = plant.get("water_log") or []
     last = plant.get("last_watered")
-    interval, why = blended_interval(log, today, profile)
-    interval = max(MIN_INTERVAL, min(MAX_INTERVAL, interval))
+    interval, why = plan_interval(plant, today, profile)
+
+    # 형이 실제로 준 간격 — 계산에는 안 쓰고 비교용으로만 얹는다.
+    gaps = own_intervals(log)
+    own = round(statistics.median(gaps), 1) if gaps else None
 
     out = {"interval_days": round(interval, 1), "basis": why,
+           "soil": soil_of(plant), "own_interval_days": own,
            "next_water": None, "days_until": None, "overdue": False}
     if not last:
         return out
