@@ -46,6 +46,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from PIL import Image
 
+import crops
 import placement
 import providers
 import watering
@@ -1232,11 +1233,15 @@ def analyze_top(boxes: List[dict], img_area: float, ref_area: float = None) -> d
     return {"top_leaf_size": size, "top_leaf_pct": pct}
 
 
-def analyze_metrics(boxes: List[dict], img_area: float, cm_per_unit: float = None) -> dict:
+def analyze_metrics(boxes: List[dict], img_area: float, cm_per_unit: float = None,
+                    crop: str = None) -> dict:
     """개체 지표. cm_per_unit 을 주면 잎을 실제 길이로 재서 등급을 매긴다.
 
     cm_per_unit = 선반 폭(cm) / 박스 좌표계 폭. 한 장 스캔이면 사진 폭 기준,
     여러 장 스캔이면 선반 캔버스 기준이라 어느 쪽이든 같은 식으로 구해진다.
+
+    crop 은 등급 기준치를 고르는 데만 쓴다 — 캐노피 15cm 는 알로카시아면 중품,
+    상추면 대품이다. 안 주면 기본 작물 기준이다.
     """
     leaves = [b for b in boxes if b["cls"].lower() not in NON_LEAF]
     leaf_count = len(leaves)
@@ -1278,9 +1283,9 @@ def analyze_metrics(boxes: List[dict], img_area: float, cm_per_unit: float = Non
                  if (canopy is not None and cm_per_unit) else None)
 
     if canopy_cm is not None:
-        size_class = grade_by_canopy_cm(canopy_cm)
+        size_class = grade_by_canopy_cm(canopy_cm, crop)
     elif leaf_max_cm is not None:
-        size_class = grade_by_leaf_cm(leaf_max_cm)          # 캐노피를 못 잡은 경우
+        size_class = grade_by_leaf_cm(leaf_max_cm, crop)    # 캐노피를 못 잡은 경우
     else:
         # 실측 배율을 모르는 경우(개체 사진 1장 등)엔 화면 대비 비율로 대신한다
         ref = canopy or biggest
@@ -1402,7 +1407,7 @@ def read_photo(rel: str) -> bytes:
         return f.read()
 
 
-def _analyze_file(raw: bytes) -> dict:
+def _analyze_file(raw: bytes, crop: str = None) -> dict:
     try:
         image = Image.open(io.BytesIO(raw)).convert("RGB")
     except Exception:
@@ -1431,7 +1436,7 @@ def _analyze_file(raw: bytes) -> dict:
 
     metrics = {}
     metrics.update(analyze_top(boxes_top, img_area))        # 모델1 → 3D
-    metrics.update(analyze_metrics(boxes_stage, img_area))  # 모델2 → 모달
+    metrics.update(analyze_metrics(boxes_stage, img_area, crop=crop))  # 모델2 → 모달
 
     # 무엇이 세어졌는지 사진 위에 그려 준다. 숫자만 보여 주면 개수가 이상해도
     # 어디서 틀렸는지 확인할 방법이 없어서, 매번 코드를 뒤져야 했다.
@@ -1449,10 +1454,46 @@ def index():
     return FileResponse(os.path.join("static", "index.html"))
 
 
+def _crop_arg(crop) -> str:
+    """폼으로 들어온 작물 키를 검증해 돌려준다. 안 주면 기본 작물.
+
+    읽을 때(crops.key_of)는 모르는 값을 조용히 기본 작물로 접지만, **받을 때는**
+    막는다. 오타가 그대로 저장되면 그 화분만 조용히 알로카시아 기준으로 계산되고,
+    사람은 상추로 골랐다고 믿는다.
+    """
+    # Form(None) 기본값은 파이썬에서 직접 부르면 None 이 아니라 FieldInfo 로 온다
+    # (_water_date·update_plant 에서 겪은 것과 같다). 그래서 타입으로 거른다.
+    if not isinstance(crop, str) or not crop.strip():
+        return crops.DEFAULT
+    crop = crop.strip()
+    if not crops.is_known(crop):
+        raise HTTPException(400, f"모르는 작물이에요: {crop} "
+                                 f"({' / '.join(crops.KEYS)} 중 하나)")
+    return crop
+
+
+def _stamp_crop(plant: dict) -> None:
+    """화면이 바로 쓰도록 작물 키·이름을 얹는다.
+
+    옛 farm.db 에는 crop 이 아예 없다. 화면마다 '없으면 알로카시아' 를 되짚게
+    하는 대신 여기서 한 번 채운다 — 물주기 계산값(days_since_watered 등)을
+    얹는 것과 같은 방식이다.
+    """
+    plant["crop"] = crops.key_of(plant)
+    plant["crop_name"] = crops.name_of(plant)
+
+
+@app.get("/api/crops")
+def list_crops():
+    """심을 수 있는 작물 목록. 추가 폼과 모달의 작물 고르기가 이걸 읽는다."""
+    return {"default": crops.DEFAULT, "crops": crops.listing()}
+
+
 @app.get("/api/plants")
 def list_plants():
     for p in PLANTS.values():
         _augment_water(p)
+        _stamp_crop(p)
     return {"engine": ENGINE_LABEL, "plants": list(PLANTS.values())}
 
 
@@ -1525,22 +1566,29 @@ def clear_pots():
 
 
 @app.post("/api/plants")
-async def add_plant(name: str = Form(...), file: UploadFile = File(...), pos: str = Form(None)):
-    """사진 + 이름 + 자리로 식물을 3D 온실에 추가(분석 포함)."""
+async def add_plant(name: str = Form(...), file: UploadFile = File(...), pos: str = Form(None),
+                    crop: str = Form(None)):
+    """사진 + 이름 + 자리로 식물을 3D 온실에 추가(분석 포함).
+
+    crop 은 무엇을 심었는지다(`/api/crops` 의 key). 안 주면 기본 작물이라
+    예전과 똑같이 동작한다 — 물주기 간격·등급 기준치·필요 광량이 여기서 갈린다.
+    """
     if not file.content_type or not file.content_type.startswith("image/"):
         raise HTTPException(400, "이미지 파일만 업로드할 수 있어요.")
-    name = name.strip() or "이름없는 알로카시아"
+    crop = _crop_arg(crop)
+    name = name.strip() or f"이름없는 {crops.get(crop)['name']}"
 
     slot = _free_slot(pos)
     if slot is None:
         raise HTTPException(400, "빈 자리가 없어요. 식물을 제거해 자리를 비워 주세요.")
 
     raw = await file.read()
-    metrics = _analyze_file(raw)
+    metrics = _analyze_file(raw, crop)
     rel = archive_photo(raw, "plant")
 
     pid = uuid.uuid4().hex[:8]
-    plant = {"id": pid, "name": name, "pos": slot["label"], "x": slot["x"], "z": slot["z"], "rot": 0,
+    plant = {"id": pid, "name": name, "crop": crop,
+             "pos": slot["label"], "x": slot["x"], "z": slot["z"], "rot": 0,
              "updated": time.strftime("%Y-%m-%d %H:%M:%S"), **metrics}
     PLANTS[pid] = plant
     save_state()
@@ -1820,7 +1868,10 @@ def _register_groups(groups: List[List[dict]], space_w: float, space_h: float,
 
         metrics = {}
         metrics.update(analyze_top(g, img_area, ref_area=per_plant_area))
-        metrics.update(analyze_metrics(g, img_area, scale))
+        # 이미 그 자리에 있는 화분이면 거기 심긴 작물 기준으로 등급을 매긴다.
+        # 새로 발견한 포기는 무슨 작물인지 알 길이 없어 기본 작물로 두고,
+        # 사람이 모달에서 고르면 regrade 가 다시 매긴다.
+        metrics.update(analyze_metrics(g, img_area, scale, crop=crops.key_of(existing)))
 
         if existing:
             now = time.strftime("%Y-%m-%d %H:%M:%S")
@@ -2008,7 +2059,7 @@ async def reanalyze(pid: str, file: UploadFile = File(...)):
     if pid not in PLANTS:
         raise HTTPException(404, "없는 식물")
     raw = await file.read()
-    metrics = _analyze_file(raw)
+    metrics = _analyze_file(raw, crops.key_of(PLANTS[pid]))
     PLANTS[pid].update(metrics)
     PLANTS[pid]["updated"] = time.strftime("%Y-%m-%d %H:%M:%S")
     _add_plant_photo(PLANTS[pid], archive_photo(raw, "plant"))
@@ -2360,7 +2411,7 @@ def rescan_from_archive(pid: str):
     rel = album[-1]["rel"] if album else PLANTS[pid].get("photo")
     if not rel:
         raise HTTPException(400, "이 화분은 보관된 원본이 없어요. 사진을 새로 올려 주세요.")
-    metrics = _analyze_file(read_photo(rel))
+    metrics = _analyze_file(read_photo(rel), crops.key_of(PLANTS[pid]))
     metrics["photo"] = rel                       # 사진은 그대로, 판정만 새로
     PLANTS[pid].update(metrics)
     PLANTS[pid]["updated"] = time.strftime("%Y-%m-%d %H:%M:%S")
@@ -2435,8 +2486,9 @@ def water_log(month: str = None):
 # 사진 전체 면적 대비 비율로 재던 예전 방식은 구도에 휘둘렸다 — 같은 식물도
 # 가까이 찍으면 대품, 멀리서 찍으면 소품이 됐고, 농장 전체 사진에서는 한 개체가
 # 화면의 3~5% 뿐이라 비율 조건이 아예 발동하지 않아 사실상 잎 개수로만 갈렸다.
-LEAF_SMALL_CM = float(os.environ.get("LEAF_SMALL_CM", "8"))    # 이하 → 소품
-LEAF_LARGE_CM = float(os.environ.get("LEAF_LARGE_CM", "16"))   # 초과 → 대품
+# 기준치는 작물마다 다르다 — crops.py 가 갖고 있고, 아래는 기본 작물(알로카시아)
+# 값이다. 환경변수(LEAF_SMALL_CM/LEAF_LARGE_CM)는 거기서 그대로 읽는다.
+LEAF_SMALL_CM, LEAF_LARGE_CM = crops.get()["leaf_cm"]           # 이하 → 소품 / 초과 → 대품
 
 
 def _leaf_long_side(box: dict) -> float:
@@ -2444,29 +2496,49 @@ def _leaf_long_side(box: dict) -> float:
     return max(box["x2"] - box["x1"], box["y2"] - box["y1"])
 
 
-def grade_by_leaf_cm(leaf_cm: float) -> str:
-    if leaf_cm <= LEAF_SMALL_CM:
-        return "소품"
-    return "중품" if leaf_cm <= LEAF_LARGE_CM else "대품"
+def grade_by_leaf_cm(leaf_cm: float, crop: str = None) -> str:
+    return crops.leaf_grade(leaf_cm, crop)
 
 
 # 캐노피(포기 전체 폭) 기준 등급. 잎 한 장보다 훨씬 크므로 기준치도 따로 둔다.
 # 모달에 실측 cm 이 함께 뜨니, 그 값을 보고 본인 기준에 맞춰 조정하시면 된다.
-CANOPY_SMALL_CM = float(os.environ.get("CANOPY_SMALL_CM", "12"))   # 이하 → 소품
-CANOPY_LARGE_CM = float(os.environ.get("CANOPY_LARGE_CM", "22"))   # 초과 → 대품
+# 기준치 자체는 작물마다 다르다 — crops.py 에 모아 뒀다(환경변수는 기본 작물용).
+CANOPY_SMALL_CM, CANOPY_LARGE_CM = crops.get()["canopy_cm"]
 
 
-def grade_by_canopy_cm(canopy_cm: float) -> str:
-    if canopy_cm <= CANOPY_SMALL_CM:
-        return "소품"
-    return "중품" if canopy_cm <= CANOPY_LARGE_CM else "대품"
+def grade_by_canopy_cm(canopy_cm: float, crop: str = None) -> str:
+    return crops.canopy_grade(canopy_cm, crop)
+
+
+def regrade(plant: dict) -> None:
+    """실측값을 그 화분의 **작물 기준으로** 다시 매긴다. 작물을 바꿀 때 부른다.
+
+    등급은 절대 크기가 아니라 '그 작물치고 큰가' 다. 캐노피 15cm 는 알로카시아면
+    중품이지만 상추면 대품이다. 그래서 작물을 바꾸면 재측정 없이도 등급이 바뀌어야
+    한다 — 안 그러면 상추로 고쳐 놓고도 알로카시아 기준 등급이 남는다.
+
+    손으로 고쳐 둔 등급도 여기서 덮인다. 기준 자체가 바뀌었으니 예전 등급을
+    지키는 게 오히려 틀리다. 실측값(캐노피·잎 cm)이 없으면 다시 잴 근거가 없어서
+    그대로 둔다.
+    """
+    crop = crops.key_of(plant)
+    canopy_cm, leaf_cm = plant.get("canopy_cm"), plant.get("leaf_max_cm")
+    if canopy_cm:
+        plant["size_class"] = grade_by_canopy_cm(canopy_cm, crop)
+    elif leaf_cm:
+        plant["size_class"] = grade_by_leaf_cm(leaf_cm, crop)
+    else:
+        return
+    if plant.get("top_leaf_size") not in (None, "없음"):
+        plant["top_leaf_size"] = SIZE_TO_TOP_LEAF.get(plant["size_class"], "중엽")
 
 
 @app.patch("/api/plants/{pid}")
 async def update_plant(pid: str, name: str = Form(None), rot: float = Form(None),
                        note: str = Form(None), size_class: str = Form(None),
                        shoot_count: int = Form(None), mature_count: int = Form(None),
-                       old_count: int = Form(None), soil: str = Form(None)):
+                       old_count: int = Form(None), soil: str = Form(None),
+                       crop: str = Form(None)):
     """이름 · 화분 방향 · 메모 · 그리고 사람이 직접 고치는 값들.
 
     사진이 뭉개지거나 잎이 가려지면 탐지가 틀립니다. 그럴 때 손으로 바로잡으라고
@@ -2489,6 +2561,14 @@ async def update_plant(pid: str, name: str = Form(None), rot: float = Form(None)
     touched = False
     # Form(None) 기본값은 파이썬에서 직접 부르면 None 이 아니라 FieldInfo 로 온다.
     # (_water_date 에서 같은 문제를 겪었다) 그래서 타입으로 거른다.
+    if isinstance(crop, str) and crop.strip():
+        # 무엇을 심었는지 — 물주기 간격·등급 기준치·필요 광량이 여기서 갈린다.
+        # 탐지값을 고치는 게 아니라 화분에 무엇이 심겼는지를 적는 것이라
+        # manual 표시와는 무관하다(흙 상태와 같은 취급).
+        p["crop"] = _crop_arg(crop)
+        _stamp_crop(p)
+        regrade(p)              # 등급 기준치가 바뀌었으니 실측값으로 다시 매긴다
+        _augment_water(p)       # 물주기 간격도 작물 프로필로 다시 잡는다
     if isinstance(soil, str):
         # 흙이 마르는 속도 — 물주기 예정일을 하루 당기거나 미룬다.
         # 탐지값을 고치는 게 아니라 화분의 성질을 적는 것이라 manual 표시와 무관하다.

@@ -26,6 +26,8 @@ import statistics
 from datetime import date, timedelta
 from typing import List
 
+import crops
+
 # 흙이 마르는 속도 — 화분마다 다르다. 프로필 값에서 며칠을 더하거나 뺄지.
 # 데이터셋이 관수 환경을 건조/일반/과습으로 나눈 것과 같은 이름을 쓴다.
 SOIL_ADJUST = {"건조": -1, "일반": 0, "과습": +1}
@@ -86,6 +88,20 @@ def _load_profile() -> dict:
 PROFILE = _load_profile()
 
 
+def profile_for(plant: dict) -> dict:
+    """그 화분에 적용할 물주기 프로필 — 심긴 작물이 정한다.
+
+    상추와 알로카시아를 같은 간격으로 주면 한쪽은 마르고 한쪽은 썩는다. 작물표에
+    그 작물의 달별 간격이 있으면 그걸 쓰고, 없으면 지금까지처럼 PROFILE 을 쓴다.
+
+    **기본 작물(알로카시아)은 일부러 작물표에 물주기를 안 적어 뒀다.** PROFILE
+    (water_profile.json 또는 DEFAULT_PROFILE)이 이미 알로카시아 기준(습생·거실)
+    이라, 작물표에 또 적으면 두 벌이 갈라진다 — 데이터셋으로 뽑아 덮어쓴 값이
+    작물표의 잠정값에 덮이는 사고가 난다.
+    """
+    return crops.of(plant).get("water") or PROFILE
+
+
 def profile_interval(when: date, profile: dict = None) -> float:
     """그 달에 프로필이 말하는 간격(일)."""
     p = PROFILE if profile is None else profile
@@ -130,13 +146,18 @@ def soil_of(plant: dict) -> str:
 
 
 def plan_interval(plant: dict, when: date, profile: dict = None) -> tuple:
-    """(간격, 근거설명) — 프로필에 흙 상태만큼 더하거나 뺀다."""
-    prof = profile_interval(when, profile)
+    """(간격, 근거설명) — 프로필에 흙 상태만큼 더하거나 뺀다.
+
+    profile 을 직접 주면 그게 이긴다(테스트·미리보기용). 안 주면 그 화분에
+    심긴 작물의 프로필을 쓴다.
+    """
+    used = profile_for(plant) if profile is None else profile
+    prof = profile_interval(when, used)
     soil = soil_of(plant)
     adj = SOIL_ADJUST[soil]
     interval = max(MIN_INTERVAL, min(MAX_INTERVAL, prof + adj))
 
-    src = (PROFILE if profile is None else profile).get("source") or "기본값"
+    src = used.get("source") or "기본값"
     why = f"{src} {prof:.0f}일"
     if adj:
         why += f" {adj:+d}일 (흙 {soil}·{SOIL_LABEL[soil]})"

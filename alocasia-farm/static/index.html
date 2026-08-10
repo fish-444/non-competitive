@@ -36,6 +36,7 @@
   .item:hover{border-color:#7ddb9a;background:#182a20}
   .item .nm{flex:1;font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .item .sz{font-size:11px;font-weight:700;padding:2px 8px;border-radius:20px;background:#24382c;color:#7ddb9a}
+  .item .cr:not(:empty){font-size:11px;font-weight:700;padding:2px 8px;border-radius:20px;background:#2a3348;color:#9fc0e8}
   .item .x{color:#c98;font-size:16px;padding:0 3px;line-height:1}
   .item .x:hover{color:#f0a3a3}
   .empty{font-size:12px;color:#6f8073;text-align:center;padding:10px}
@@ -106,9 +107,12 @@
   <div class="form">
     <label>① 식물 이름</label>
     <input type="text" id="name" placeholder="예: 프라이덱, 흑룡, 거북알로카시아" maxlength="24" />
-    <label>② 식물 사진</label>
+    <label>② 무엇을 심었나요</label>
+    <select id="crop"></select>
+    <div id="cropNote" style="font-size:10.5px;color:#6f8073;margin:4px 0 2px;line-height:1.5"></div>
+    <label>③ 식물 사진</label>
     <input type="file" id="file" accept="image/*" />
-    <label>③ 자리 선택</label>
+    <label>④ 자리 선택</label>
     <select id="pos"></select>
     <button class="btn" id="addBtn" disabled>🌱 온실에 추가</button>
     <div id="status"></div>
@@ -241,7 +245,13 @@
     <div class="chips"><span class="chip" id="mSize"></span><span class="chip" id="mManual" style="display:none;background:#7a5c22">✋ 직접 수정함</span></div>
 
     <div style="font-size:11px;color:#9fb4a6;margin-bottom:5px">
-      크기 등급 — <b style="color:#cfe0d4">가장 큰 잎 길이</b>로 자동 판정 · 눌러서 바꾸기</div>
+      작물 — <b style="color:#cfe0d4">물주기 간격 · 등급 기준치 · 필요 광량</b>이 여기서 갈립니다</div>
+    <select id="mCrop" style="width:100%;font-size:12.5px;padding:8px;background:#14201a;
+      color:#e8f0ea;border:1px solid rgba(120,180,140,.3);border-radius:8px"></select>
+    <div id="mCropNote" style="font-size:10.5px;color:#6f8073;margin:4px 0 11px;min-height:1.2em;line-height:1.5"></div>
+
+    <div style="font-size:11px;color:#9fb4a6;margin-bottom:5px">
+      크기 등급 — <b style="color:#cfe0d4">그 작물 기준</b>으로 자동 판정 · 눌러서 바꾸기</div>
     <div class="szrow" id="mSizePick">
       <button type="button" data-sz="소품">소품</button>
       <button type="button" data-sz="중품">중품</button>
@@ -664,8 +674,12 @@ function refreshList(){
   items.sort((a,b)=>(a.pos||'').localeCompare(b.pos||''));
   items.forEach(p=>{
     const el=document.createElement('div'); el.className='item';
-    el.innerHTML=`<span class="nm"></span><span class="sz"></span><span class="x">×</span>`;
+    el.innerHTML=`<span class="nm"></span><span class="cr"></span><span class="sz"></span><span class="x">×</span>`;
     el.querySelector('.nm').textContent=(p.pos?p.pos+' · ':'')+p.name; const szEl=el.querySelector('.sz'); szEl.textContent=p.size_class;
+    // 작물 딱지는 기본 작물이 아닐 때만 — 알로카시아만 키우는 온실에서는 줄마다
+    // 같은 글자가 붙어 읽는 데 방해만 된다.
+    const crEl=el.querySelector('.cr');
+    if(p.crop&&p.crop!==CROP_DEFAULT) crEl.textContent=p.crop_name||cropBy(p.crop).name;
     if(p.size_class==='미검출'){szEl.style.background='#4a3a1c';szEl.style.color='#e8c96a';}
     el.addEventListener('click',ev=>{ if(ev.target.classList.contains('x')){delPlant(p.id);ev.stopPropagation();return;} openModal(p); });
     list.appendChild(el);
@@ -694,6 +708,30 @@ async function refreshSlots(){
   });
 }
 
+// ===== 작물 =====
+// 무엇을 심었는지에 따라 물주기 간격·등급 기준치·필요 광량이 갈린다. 목록은
+// 서버(crops.py)가 갖고 있으니 한 번 받아 두 군데(추가 폼·모달)에 함께 쓴다.
+let CROPS=[], CROP_DEFAULT='alocasia';
+const cropBy=k=>CROPS.find(c=>c.key===k)||CROPS.find(c=>c.key===CROP_DEFAULT);
+function cropLine(c){
+  if(!c) return '';
+  const days=c.interval_days?` · 물 ${c.interval_days}일꼴`:'';
+  return `${c.kind}${days} · ${c.note}`;
+}
+function fillCropSelect(sel,picked){
+  sel.innerHTML='';
+  CROPS.forEach(c=>{const o=document.createElement('option');o.value=c.key;o.textContent=c.name+' ('+c.kind+')';sel.appendChild(o);});
+  sel.value=cropBy(picked)?cropBy(picked).key:CROP_DEFAULT;
+}
+async function loadCrops(){
+  let d; try{ d=await(await fetch('/api/crops')).json(); }catch(e){ return; }
+  CROPS=d.crops||[]; CROP_DEFAULT=d.default||CROP_DEFAULT;
+  const sel=document.getElementById('crop');
+  fillCropSelect(sel,CROP_DEFAULT);
+  const note=()=>document.getElementById('cropNote').textContent=cropLine(cropBy(sel.value));
+  sel.addEventListener('change',note); note();
+}
+
 // ===== 추가 =====
 const nameEl=document.getElementById('name'),fileEl=document.getElementById('file'),addBtn=document.getElementById('addBtn'),statusEl=document.getElementById('status');
 function chkForm(){addBtn.disabled=!(nameEl.value.trim()&&fileEl.files[0]);}
@@ -701,6 +739,7 @@ nameEl.addEventListener('input',chkForm); fileEl.addEventListener('change',chkFo
 addBtn.addEventListener('click',async()=>{
   addBtn.disabled=true; statusEl.textContent='분석 중…';
   const fd=new FormData(); fd.append('name',nameEl.value.trim()); fd.append('file',fileEl.files[0]); fd.append('pos',document.getElementById('pos').value);
+  fd.append('crop',document.getElementById('crop').value);
   try{
     const r=await fetch('/api/plants',{method:'POST',body:fd});
     if(!r.ok){const e=await r.json().catch(()=>({}));throw new Error(e.detail||'추가 실패');}
@@ -831,7 +870,10 @@ async function loadPlacement(){
   document.getElementById('plScore').textContent=d.spots.length?d.score:'–';
   document.getElementById('plWorst').innerHTML=d.worst.map(s=>
     `<div>${s.slot} <b style="color:${s.score<40?'#e8a64a':'#9fb4a6'}">${s.score}점</b>`
-    +` <span style="color:#5c6b60">빛 ${s.light} · 그늘 ${s.shade}</span></div>`).join('')
+    // 작물마다 필요한 빛이 달라서 같은 자리도 점수가 다르다 — 무엇이 놓였는지
+    // 안 보이면 '왜 여기가 나쁘지' 를 화면에서 알 수가 없다.
+    +(s.crop&&s.crop!==CROP_DEFAULT?` <span style="color:#9fc0e8">${s.crop_name}</span>`:'')
+    +` <span style="color:#5c6b60">빛 ${s.light} · 그늘 ${s.shade} · 필요 ${s.need_light}</span></div>`).join('')
     || '<div>식물을 등록하면 자리별 점수가 나옵니다</div>';
 }
 document.getElementById('plOpt').addEventListener('click',async()=>{
@@ -1201,6 +1243,9 @@ function openModal(p){
   sz.textContent=p.size_class+(p.canopy_cm?` · 포기 ${p.canopy_cm}cm`:(p.leaf_max_cm?` · 잎 ${p.leaf_max_cm}cm`:''));
   sz.style.background=(p.size_class==='미검출')?'#7a5c22':'#2e7d32';
   document.getElementById('mManual').style.display=p.manual?'inline-block':'none';
+  const mc=document.getElementById('mCrop');
+  fillCropSelect(mc,p.crop);
+  document.getElementById('mCropNote').textContent=cropLine(cropBy(mc.value));
   [...document.querySelectorAll('#mSizePick button')].forEach(b=>
     b.setAttribute('aria-pressed', b.dataset.sz===p.size_class ? 'true':'false'));
   document.getElementById('mShootN').textContent=(p.shoot_count!=null?p.shoot_count:'–');
@@ -1577,6 +1622,8 @@ async function patchPlant(fields){
 // 크기 등급
 document.querySelectorAll('#mSizePick button').forEach(b=>
   b.addEventListener('click',()=>patchPlant({size_class:b.dataset.sz})));
+// 작물 — 바꾸면 등급이 그 작물 기준으로 다시 매겨지고 물주기 예정일도 다시 잡힌다
+document.getElementById('mCrop').addEventListener('change',e=>patchPlant({crop:e.target.value}));
 // 흙 마름 — 예정일을 하루 당기거나 미룬다
 document.querySelectorAll('#mSoilPick button').forEach(b=>
   b.addEventListener('click',()=>patchPlant({soil:b.dataset.soil})));
@@ -1611,7 +1658,8 @@ document.getElementById('mReFile').addEventListener('change',async(e)=>{
 
 addEventListener('resize',()=>{camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight);});
 (function loop(){requestAnimationFrame(loop);controls.update();renderer.render(scene,camera);})();
-loadEnvironment(); loadPots().then(loadLeaves); loadAll(); loadCalib();
+// 작물 목록이 먼저 있어야 리스트·모달이 이름을 붙일 수 있다.
+loadEnvironment(); loadPots().then(loadLeaves); loadCrops().then(loadAll); loadCalib();
 </script>
 </body>
 </html>

@@ -18,6 +18,8 @@ import math
 import os
 from typing import List
 
+import crops
+
 # --------------------------------------------------------------------------- 환경
 # 조명은 실제로 좌측·우측 레일에 3개 달려 있다(2개+1개) — 실측 위치를 넣기
 # 전까지는 화분 자리를 처음 표시할 때 찍었던 세 지점을 그대로 쓴다(선반 위 47cm).
@@ -52,13 +54,43 @@ GRADE_SHAPE = {"소품": (7.0, 14.0), "중품": (13.0, 28.0), "대품": (20.0, 4
 FALLBACK_SHAPE = (10.0, 20.0)          # 미검출 등
 
 
+def _grade_shape(profile: dict, size_class) -> tuple:
+    """등급별 기본 몸집 — 작물이 따로 적어 뒀으면 그쪽, 아니면 캐노피 기준치에서 만든다.
+
+    작물마다 '다 큰 포기' 의 크기가 다르니 등급별 몸집도 달라야 한다. 그렇다고
+    작물표에 여섯 개 숫자를 또 적게 하면 캐노피 기준치와 갈라지므로, 이미 적힌
+    기준치(소품 이하 / 대품 초과)에서 뽑아 쓴다 — 캐노피 긴 변의 절반이 반지름이다.
+    대품은 위가 안 막혀 있어서 기준치보다 조금 크다고 본다.
+    """
+    explicit = profile.get("grade_shape")
+    if explicit:
+        got = explicit.get(size_class)
+        if got:
+            return float(got[0]), float(got[1])
+        return FALLBACK_SHAPE
+    small_cm, large_cm = profile["canopy_cm"]
+    canopy_cm = {"소품": small_cm, "중품": (small_cm + large_cm) / 2,
+                 "대품": large_cm * 1.3}.get(size_class)
+    if canopy_cm is None:
+        return FALLBACK_SHAPE
+    radius_cm = canopy_cm / 2
+    return radius_cm, radius_cm * profile["height_ratio"]
+
+
 def plant_shape(plant: dict) -> tuple:
-    """식물 → (잎우산 반지름 cm, 키 cm). 실측이 있으면 실측을 쓴다."""
-    radius_cm, height_cm = GRADE_SHAPE.get(plant.get("size_class"), FALLBACK_SHAPE)
-    measured = plant.get("leaf_max_cm")
+    """식물 → (잎우산 반지름 cm, 키 cm). 실측이 있으면 실측을 쓴다.
+
+    무엇을 실측으로 볼지는 작물이 정한다(`radius_from`). 알로카시아는 잎자루가
+    사방으로 뻗어 **잎 한 장 길이가 곧 반지름**이지만, 잎이 작고 가지가 벌어지는
+    바질·토마토는 잎으로 포기 폭을 잴 수 없어서 **캐노피 폭의 절반**을 쓴다.
+    """
+    profile = crops.of(plant)
+    radius_cm, height_cm = _grade_shape(profile, plant.get("size_class"))
+    measured = (plant.get("leaf_max_cm") if profile["radius_from"] == "leaf"
+                else (plant.get("canopy_cm") or 0) / 2 or None)
     if measured:
         radius_cm = float(measured)
-        height_cm = radius_cm * 2.2       # 알로카시아는 잎보다 키가 크다
+        height_cm = radius_cm * profile["height_ratio"]
     return radius_cm, height_cm
 
 
@@ -106,9 +138,20 @@ def _circle_overlap(r1_cm: float, r2_cm: float, d_cm: float) -> float:
 
 
 # --------------------------------------------------------------------------- 점수
-def _need_light(r_cm: float) -> float:
-    """잎이 넓을수록 빛을 많이 써야 한다 (잎면적에 대략 비례)."""
-    return max(0.35, min(1.0, (r_cm / 20.0) ** 1.5))
+def _need_light(r_cm: float, plant: dict = None) -> float:
+    """잎이 넓을수록 빛을 많이 써야 한다 (잎면적에 대략 비례).
+
+    같은 크기라도 작물마다 필요한 양이 다르다 — 숲 바닥에서 크는 알로카시아(1.0)와
+    열매를 달아야 하는 방울토마토(1.8)를 같은 기준으로 채점하면, 토마토를 그늘에
+    처박아도 점수가 안 깎여서 최적화가 그 자리를 좋다고 내놓는다.
+
+    배수는 잘라 낸 **뒤에** 곱한다. 안쪽 0.35~1.0 은 '몸집이 이보다 커져도(작아져도)
+    더 먹지는 않는다'는 몸집 쪽 한계라, 여기에 배수를 넣고 자르면 큰 포기가 전부
+    1.0 으로 뭉개져서 토마토와 알로카시아가 같은 값이 된다 — 정작 구분이 필요한
+    자리에서 구분이 사라진다. 기본 작물은 배수가 1.0 이라 예전 값 그대로다.
+    """
+    factor = crops.of(plant)["light"] if plant is not None else 1.0
+    return factor * max(0.35, min(1.0, (r_cm / 20.0) ** 1.5))
 
 
 def geometry(spots: List[dict], lights=None) -> dict:
@@ -162,11 +205,13 @@ def score_layout(spots: List[dict], lights=None, geo: dict = None) -> dict:
     out, totals = [], []
     for i, s in enumerate(spots):
         got_light, shade = lit[i]
-        need_l = _need_light(s["r_cm"])
+        need_l = _need_light(s["r_cm"], s["plant"])
         light_ok = min(1.0, got_light / need_l) if need_l else 1.0
         totals.append(light_ok)
         out.append({"slot": s["slot"], "plant_id": s["plant"].get("id"),
                     "name": s["plant"].get("name"),
+                    "crop": crops.key_of(s["plant"]),
+                    "crop_name": crops.name_of(s["plant"]),
                     "light": round(got_light * 100), "shade": round(shade * 100),
                     "score": round(light_ok * 100), "need_light": round(need_l * 100)})
     return {"score": round(sum(totals) / len(totals) * 100, 1), "spots": out}
@@ -204,8 +249,8 @@ def optimize(spots: List[dict], lights=None, rounds: int = 40) -> dict:
     order = list(range(n))                   # order[i] = i번 자리에 놓인 식물의 원래 번호
     plants = [s["plant"] for s in spots]
     shapes = [(s["r_cm"], s["h_cm"]) for s in spots]
-    # 필요한 빛은 식물에 딸린 값이라 자리를 옮겨도 그대로다
-    needs = [_need_light(shapes[k][0]) for k in range(n)]
+    # 필요한 빛은 식물에 딸린 값이라 자리를 옮겨도 그대로다 (몸집 + 작물)
+    needs = [_need_light(shapes[k][0], plants[k]) for k in range(n)]
 
     def rate(order):
         radii = [shapes[order[i]][0] for i in range(n)]
@@ -240,6 +285,7 @@ def optimize(spots: List[dict], lights=None, rounds: int = 40) -> dict:
         dest[src] = i
 
     moves = [{"plant_id": plants[p].get("id"), "name": plants[p].get("name"),
+              "crop_name": crops.name_of(plants[p]),
               "from": spots[p]["slot"], "to": spots[dest[p]]["slot"]}
              for p in range(n) if dest[p] != p]
 
