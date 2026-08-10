@@ -11,12 +11,13 @@
 셋 다 코드가 틀린 게 아니라 **어느 작물인지 몰라서** 나는 오차다. 그래서
 화분마다 작물을 적고, 작물마다 다른 값을 여기 한곳에 모았다.
 
-작물마다 다른 건 결국 네 가지다.
+작물마다 다른 건 결국 다섯 가지다.
 
   1. 물을 얼마나 자주 주는가        `water`          → watering.recommend
   2. 얼마나 커야 큰 포기인가        `canopy_cm`/`leaf_cm` → main.grade_by_*
   3. 빛이 얼마나 필요한가           `light`          → placement._need_light
   4. 폭에 비해 얼마나 키가 큰가     `height_ratio`   → placement.plant_shape
+  5. 언제 얼마나 거두는가           `harvest`        → harvest.forecast
 
 탐지기는 안 건드린다. 로보플로우 워크플로는 알로카시아 잎·캐노피로 학습된
 것이라 상추 사진에서 잎을 덜 잡을 수 있지만, 그건 모델을 바꿔야 하는 문제이지
@@ -53,6 +54,17 @@ def _water(source: str, by_month: dict) -> dict:
             "by_month": {str(m): d for m, d in sorted(by_month.items())}}
 
 
+# 수확 방식은 **우리가 실제로 재는 것**에 맞춰 둘로만 나눈다. 탐지기는 잎과
+# 캐노피만 보고 열매는 아예 못 본다 — 여기서 방식을 더 잘게 쪼개 봐야 셋 다
+# 같은 두 숫자에서 나오는 추정이라 정밀해 보이기만 하고 근거는 안 는다.
+#
+#   "잎"   — 잎을 따서 먹는다. 잎 수를 세고 있으니 생산량이 측정에 붙어 있다.
+#            (잎 수 − 남길 잎) × 잎 한 장 무게.
+#   "열매" — 열매를 딴다. **열매는 탐지가 안 된다.** 포기가 얼마나 컸는지로
+#            에두른 추정이라 반드시 rough 로 표시해 내보낸다.
+HARVEST_LEAF, HARVEST_FRUIT = "잎", "열매"
+
+
 # --------------------------------------------------------------------------- 작물표
 # 순서가 화면에 나오는 순서다. 관상(원래 키우던 것) → 잎채소 → 허브 → 열매채소.
 #
@@ -78,6 +90,8 @@ CROPS = {
         "height_ratio": 2.2, "radius_from": "leaf",
         # 잎우산 반지름·키의 등급별 기본값. 실측이 없을 때만 쓴다.
         "grade_shape": {"소품": [7.0, 14.0], "중품": [13.0, 28.0], "대품": [20.0, 45.0]},
+        # 관상식물이다. 잎을 따면 그게 손해라, 수확 예측을 만들지 않는다.
+        "harvest": None,
         "note": "숲 바닥에서 크는 관엽 — 직사광에 잎이 탄다",
     },
     "lettuce": {
@@ -87,6 +101,9 @@ CROPS = {
                         {1: 4, 2: 4, 3: 3, 4: 2, 5: 2, 6: 2,
                          7: 2, 8: 2, 9: 2, 10: 3, 11: 3, 12: 4}),
         "light": 1.3, "height_ratio": 0.8, "radius_from": "canopy",
+        "harvest": {"mode": HARVEST_LEAF, "ready_canopy_cm": 18.0,
+                    "ready_leaf_count": 10, "keep_leaves": 5,
+                    "g_per_leaf": 4.0, "cycle_days": 14},
         "note": "뿌리가 얕아 자주 마른다 · 낮게 퍼져 옆을 안 가린다",
     },
     "bokchoy": {
@@ -96,6 +113,10 @@ CROPS = {
                         {1: 4, 2: 4, 3: 3, 4: 2, 5: 2, 6: 2,
                          7: 2, 8: 2, 9: 2, 10: 3, 11: 3, 12: 4}),
         "light": 1.3, "height_ratio": 0.9, "radius_from": "canopy",
+        # 통포기로 뽑는 게 흔하지만, 우리가 세는 건 잎이라 겉잎 기준으로 잡는다.
+        "harvest": {"mode": HARVEST_LEAF, "ready_canopy_cm": 18.0,
+                    "ready_leaf_count": 10, "keep_leaves": 5,
+                    "g_per_leaf": 6.0, "cycle_days": 14},
         "note": "상추와 같은 리듬 · 잎이 두꺼워 조금 덜 마른다",
     },
     "arugula": {
@@ -105,6 +126,9 @@ CROPS = {
                         {1: 4, 2: 4, 3: 3, 4: 3, 5: 2, 6: 2,
                          7: 2, 8: 2, 9: 2, 10: 3, 11: 3, 12: 4}),
         "light": 1.3, "height_ratio": 0.8, "radius_from": "canopy",
+        "harvest": {"mode": HARVEST_LEAF, "ready_canopy_cm": 14.0,
+                    "ready_leaf_count": 12, "keep_leaves": 6,
+                    "g_per_leaf": 1.5, "cycle_days": 12},
         "note": "포기가 작아 등급 기준치도 작다",
     },
     "basil": {
@@ -114,6 +138,10 @@ CROPS = {
                         {1: 5, 2: 5, 3: 4, 4: 3, 5: 2, 6: 2,
                          7: 2, 8: 2, 9: 3, 10: 3, 11: 4, 12: 5}),
         "light": 1.5, "height_ratio": 1.4, "radius_from": "canopy",
+        # 순을 질러 줘야 옆으로 벌어진다 — 따는 게 곧 관리다.
+        "harvest": {"mode": HARVEST_LEAF, "ready_canopy_cm": 18.0,
+                    "ready_leaf_count": 12, "keep_leaves": 8,
+                    "g_per_leaf": 1.0, "cycle_days": 14},
         "note": "잎은 작은데 포기는 넓게 벌어진다 — 캐노피로 재야 맞는다",
     },
     "strawberry": {
@@ -123,6 +151,8 @@ CROPS = {
                         {1: 5, 2: 5, 3: 4, 4: 3, 5: 3, 6: 2,
                          7: 2, 8: 2, 9: 3, 10: 4, 11: 4, 12: 5}),
         "light": 1.6, "height_ratio": 0.9, "radius_from": "canopy",
+        "harvest": {"mode": HARVEST_FRUIT, "ready_canopy_cm": 20.0,
+                    "g_per_cycle": 50.0, "cycle_days": 10},
         "note": "열매를 달려면 빛이 많이 필요하다 · 키는 안 큰다",
     },
     "tomato": {
@@ -132,6 +162,8 @@ CROPS = {
                         {1: 5, 2: 5, 3: 4, 4: 3, 5: 2, 6: 2,
                          7: 2, 8: 2, 9: 3, 10: 3, 11: 4, 12: 5}),
         "light": 1.8, "height_ratio": 2.6, "radius_from": "canopy",
+        "harvest": {"mode": HARVEST_FRUIT, "ready_canopy_cm": 26.0,
+                    "g_per_cycle": 120.0, "cycle_days": 10},
         "note": "이 선반에서 제일 빛을 많이 먹고, 옆 화분을 가장 크게 가린다",
     },
     "pepper": {
@@ -141,6 +173,8 @@ CROPS = {
                         {1: 6, 2: 6, 3: 5, 4: 4, 5: 3, 6: 2,
                          7: 2, 8: 2, 9: 3, 10: 4, 11: 5, 12: 6}),
         "light": 1.7, "height_ratio": 2.0, "radius_from": "canopy",
+        "harvest": {"mode": HARVEST_FRUIT, "ready_canopy_cm": 22.0,
+                    "g_per_cycle": 60.0, "cycle_days": 10},
         "note": "토마토보다 물을 덜 먹지만 빛은 비슷하게 필요하다",
     },
 }
@@ -183,13 +217,19 @@ def name_of(plant: dict) -> str:
     return of(plant)["name"]
 
 
+def harvest_of(plant: dict) -> dict:
+    """그 화분의 수확 규격. 관상식물처럼 안 거두는 작물이면 None."""
+    return of(plant).get("harvest")
+
+
 def listing() -> list:
     """화면에 뿌릴 작물 목록. 고르는 데 필요한 것만 담는다."""
     return [{"key": c["key"], "name": c["name"], "kind": c["kind"],
              "note": c["note"],
              "canopy_cm": list(c["canopy_cm"]),
              "light": c["light"],
-             "interval_days": (c["water"] or {}).get("base_interval_days")}
+             "interval_days": (c["water"] or {}).get("base_interval_days"),
+             "harvest_mode": (c["harvest"] or {}).get("mode")}
             for c in CROPS.values()]
 
 

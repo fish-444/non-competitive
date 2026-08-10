@@ -47,6 +47,7 @@ from fastapi.staticfiles import StaticFiles
 from PIL import Image
 
 import crops
+import harvest
 import placement
 import providers
 import watering
@@ -1483,6 +1484,20 @@ def _stamp_crop(plant: dict) -> None:
     plant["crop_name"] = crops.name_of(plant)
 
 
+def _stamp_harvest(plant: dict) -> None:
+    """수확이 코앞인지만 목록에 얹는다 — 리스트 딱지·자리 지도가 이걸 본다.
+
+    예측 한 건은 필드가 열댓 개라 목록에 통째로 실으면 화분 50개에 그만큼 곱해진다.
+    '언제·얼마나' 세 줄만 얹고, 근거와 추세는 모달이 따로 부른다
+    (측정 이력을 /api/plants 에 안 싣는 것과 같은 이유).
+    """
+    got = harvest.forecast(plant)
+    plant["harvest_on"] = got["ready_on"]
+    plant["harvest_days"] = got["days_until"]
+    plant["harvest_g"] = got["yield_g"]
+    plant["harvest_ready"] = got["ready_now"]
+
+
 @app.get("/api/crops")
 def list_crops():
     """심을 수 있는 작물 목록. 추가 폼과 모달의 작물 고르기가 이걸 읽는다."""
@@ -1494,6 +1509,7 @@ def list_plants():
     for p in PLANTS.values():
         _augment_water(p)
         _stamp_crop(p)
+        _stamp_harvest(p)
     return {"engine": ENGINE_LABEL, "plants": list(PLANTS.values())}
 
 
@@ -2463,7 +2479,29 @@ def plant_history(pid: str):
         if a and b:
             grew = round(b - a, 1)
     return {"id": pid, "rows": log, "grew_cm": grew,
-            "since": first.get("on") if first else None}
+            "since": first.get("on") if first else None,
+            # 이력을 그리는 자리에서 앞으로의 예측도 같이 본다 — 같은 기록에서
+            # 나오는 값이라 따로 부르면 왕복만 한 번 는다.
+            "forecast": harvest.forecast(PLANTS[pid])}
+
+
+@app.get("/api/harvest")
+def harvest_plan(days: int = harvest.FARM_WINDOW_DAYS):
+    """온실 전체 수확 계획 — 언제 무엇을 얼마나 거두나.
+
+    화분 하나씩 보면 '이건 12일 뒤 40g' 이지만, 정작 알고 싶은 건 '이번 달에
+    얼마나 나오나' 와 '오늘 딸 게 있나' 다.
+    """
+    days = max(1, min(365, days))
+    return harvest.farm_forecast(PLANTS.values(), window_days=days)
+
+
+@app.get("/api/plants/{pid}/forecast")
+def plant_forecast(pid: str):
+    """이 화분 하나의 수확적기·예상 생산량."""
+    if pid not in PLANTS:
+        raise HTTPException(404, "없는 식물")
+    return {"id": pid, **harvest.forecast(PLANTS[pid])}
 
 
 @app.get("/api/water-log")
