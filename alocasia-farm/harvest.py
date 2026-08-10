@@ -186,12 +186,19 @@ def _yield_g(spec: dict, mode: str, canopy_cm, leaf_count) -> tuple:
     return None, False
 
 
-def forecast(plant: dict, today: date = None) -> dict:
+def forecast(plant: dict, today: date = None, growth_factor: float = 1.0) -> dict:
     """이 화분의 수확적기와 예상 생산량.
 
     캐노피 추세로 '언제'를 잡고, 잎 추세로 '얼마나'를 잡는다. 둘을 따로 재는 건
     수확적기를 정하는 건 포기가 다 벌어졌는지(캐노피)인데, 실제로 손에 들어오는
     양은 잎 수라서다 — 같은 18cm 라도 잎이 여덟 장이냐 열두 장이냐가 다르다.
+
+    `growth_factor` 는 weather.growth_factor 가 낸 배율이다 — 앞으로 올 날씨가
+    **잰 기간보다** 얼마나 자라기 좋은가. 기본값 1.0 이라 안 주면 예전과 똑같다.
+
+    이 배율은 **날짜를 만들어 내지 못한다.** 아래 두 거절(안 자란다 / 너무 멀다)은
+    배율을 곱하기 **전** 의 실측 기울기로 판정한다. 날씨가 좋아진다고 원래 안
+    나왔을 날짜가 나오면 그건 보정이 아니라 규칙 우회다.
     """
     today = today or date.today()
     spec = crops.harvest_of(plant)
@@ -236,10 +243,21 @@ def forecast(plant: dict, today: date = None) -> dict:
         return _result("포기가 안 커지고 있어요 — 빛·물·자리를 먼저 살펴 주세요 "
                       f"(하루 {canopy['per_day']:+.2f}cm)", spec, **common)
 
-    days = (spec["ready_canopy_cm"] - now_cm) / canopy["per_day"]
-    if days > MAX_HORIZON_DAYS:
+    raw_days = (spec["ready_canopy_cm"] - now_cm) / canopy["per_day"]
+    # 거절 판정은 **실측 기울기 그대로** 본다 — 날씨 배율을 곱한 뒤에 보면
+    # 원래 '너무 멀다' 로 거절됐을 화분이 배율 덕에 통과해 버린다.
+    if raw_days > MAX_HORIZON_DAYS:
         return _result(f"이 속도면 {MAX_HORIZON_DAYS}일 넘게 걸려요 — 날짜를 찍기엔 너무 멉니다",
                       spec, **common)
+
+    try:
+        factor = float(growth_factor or 1.0)
+    except (TypeError, ValueError):
+        factor = 1.0
+    factor = factor if factor > 0 else 1.0
+    days = raw_days / factor
+    common["growth_factor"] = round(factor, 3)
+    common["days_without_weather"] = max(0, round(raw_days))
 
     days = max(0, round(days))
     ready = today + timedelta(days=days)
@@ -251,25 +269,37 @@ def forecast(plant: dict, today: date = None) -> dict:
         leaf_then = float(spec["ready_leaf_count"])
     g, rough = _yield_g(spec, mode, spec["ready_canopy_cm"], leaf_then)
 
-    return _result(f"하루 {canopy['per_day']:+.2f}cm 로 {spec['ready_canopy_cm']:.0f}cm 까지",
+    why = f"하루 {canopy['per_day']:+.2f}cm 로 {spec['ready_canopy_cm']:.0f}cm 까지"
+    moved = common["days_without_weather"] - days
+    # 배율이 1.0 이 아니어도 반올림하면 같은 날인 경우가 있다. 그때 '날씨로 0일'
+    # 이라고 적으면 아무 말도 아니면서 보정이 있었던 것처럼 읽힌다.
+    if moved:
+        why += f" · 날씨로 {abs(moved)}일 {'당김' if moved > 0 else '미룸'} (×{factor:.2f})"
+    return _result(why,
                   spec, ready_on=ready.isoformat(), days_until=days,
                   yield_g=g, rough=rough, leaf_at_harvest=(round(leaf_then, 1)
                                                           if leaf_then is not None else None),
                   **common)
 
 
-def farm_forecast(plants, today: date = None, window_days: int = None) -> dict:
+def farm_forecast(plants, today: date = None, window_days: int = None,
+                  growth_factor_of=None) -> dict:
     """온실 전체 — 언제 무엇을 얼마나 거두나.
 
     화분 하나씩 보면 '이건 12일 뒤 40g' 이지만, 정작 알고 싶은 건 '이번 달에
     얼마나 나오나' 와 '오늘 딸 게 있나' 다. 그래서 날짜별로 묶어서 돌려준다.
+
+    `growth_factor_of(plant) -> 배율` 을 주면 화분마다 날씨 배율을 물어본다.
+    함수로 받는 건 이 모듈이 기상 자료를 직접 안 보기 때문이다 — 날씨를 받아
+    오는 쪽(main)이 어떻게 구하는지는 여기서 알 필요가 없다. 안 주면 배율 1.0
+    이라 패널과 모달이 서로 다른 날짜를 말하지 않는다.
     """
     today = today or date.today()
     window_days = FARM_WINDOW_DAYS if window_days is None else window_days
     rows, by_date, total_g, ready_now = [], {}, 0, []
 
     for p in plants:
-        got = forecast(p, today)
+        got = forecast(p, today, growth_factor_of(p) if growth_factor_of else 1.0)
         if not got["harvestable"]:
             continue
         row = {"plant_id": p.get("id"), "name": p.get("name"), "pos": p.get("pos"),

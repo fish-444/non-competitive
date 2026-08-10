@@ -105,6 +105,32 @@
       <code>farm_env.bat</code> 의 키를 채운 뒤 서버를 껐다 켜세요.</span>
     </div>
   </div>
+  <!-- 기상 — 바깥 날씨를 얼마나 반영할지는 재배 환경이 정한다. 기본(실내)은 0 이라
+       설정을 안 건드리면 예전과 똑같이 동작한다. -->
+  <div class="form" style="border-bottom:1px solid rgba(120,180,140,.18);padding-bottom:11px">
+    <div style="display:flex;align-items:baseline;gap:6px">
+      <div style="font-size:12px;color:#cfe0d4">🌤️ <b>바깥 날씨</b></div>
+      <span id="wxNow" style="font-size:11px;color:#9fb4a6;margin-left:auto"></span>
+    </div>
+    <div id="wxLine" style="font-size:10.5px;color:#6f8073;margin-top:4px;line-height:1.6"></div>
+    <details id="wxSetup" style="margin-top:7px">
+      <summary style="font-size:11px;color:#9fb4a6;cursor:pointer">온실 위치·재배 환경 설정</summary>
+      <label style="display:block;font-size:11px;color:#9fb4a6;margin:7px 0 3px">재배 환경</label>
+      <select id="wxSite"></select>
+      <div id="wxSiteNote" style="font-size:10.5px;color:#6f8073;margin:4px 0 2px;line-height:1.5"></div>
+      <label style="display:block;font-size:11px;color:#9fb4a6;margin:7px 0 3px">위도 · 경도</label>
+      <div style="display:flex;gap:5px">
+        <input type="text" id="wxLat" placeholder="37.5665" style="flex:1;min-width:0" />
+        <input type="text" id="wxLon" placeholder="126.9780" style="flex:1;min-width:0" />
+      </div>
+      <div class="mrow" style="margin-top:6px">
+        <button type="button" class="mbtn" id="wxHere">📍 지금 위치로</button>
+        <button type="button" class="mbtn" id="wxSave">저장</button>
+      </div>
+      <button type="button" class="mbtn" id="wxClear" style="margin-top:5px">위치 지우기 (날씨 끄기)</button>
+      <div id="wxMsg" style="font-size:10.5px;color:#6f8073;margin-top:5px;min-height:1.2em"></div>
+    </details>
+  </div>
   <div class="form">
     <label>① 식물 이름</label>
     <input type="text" id="name" placeholder="예: 프라이덱, 흑룡, 거북알로카시아" maxlength="24" />
@@ -722,6 +748,89 @@ async function refreshSlots(){
     map.appendChild(cell);
   });
 }
+
+// ===== 바깥 날씨 =====
+// 알로카시아 쪽은 날씨를 일부러 안 봤다. 작물 온실은 전제가 달라서 보되,
+// **얼마나 볼지는 사용자가 고른 재배 환경이 정한다.** 기본(실내)은 반영 0 이라
+// 위치를 넣어도 물주기·수확 숫자가 안 움직인다 — 그게 정상이고, 화면에도 그렇게 적는다.
+let SITES=[];
+async function loadSite(){
+  let d; try{ d=await(await fetch('/api/site')).json(); }catch(e){ return; }
+  SITES=d.sites||[];
+  const sel=document.getElementById('wxSite');
+  if(!sel.options.length){
+    SITES.forEach(s=>{const o=document.createElement('option');o.value=s.key;o.textContent=s.name;sel.appendChild(o);});
+    sel.addEventListener('change',()=>{
+      const s=SITES.find(x=>x.key===sel.value);
+      document.getElementById('wxSiteNote').textContent=s?s.note:'';
+    });
+  }
+  sel.value=d.site;
+  const cur=SITES.find(x=>x.key===d.site);
+  document.getElementById('wxSiteNote').textContent=cur?cur.note:'';
+  if(d.lat!=null) document.getElementById('wxLat').value=d.lat;
+  if(d.lon!=null) document.getElementById('wxLon').value=d.lon;
+  if(!d.configured) document.getElementById('wxSetup').open=true;
+  await loadWeather();
+}
+async function loadWeather(){
+  const now=document.getElementById('wxNow'), line=document.getElementById('wxLine');
+  let d; try{ d=await(await fetch('/api/weather')).json(); }catch(e){ return; }
+  if(!d.configured){
+    now.textContent='';
+    line.innerHTML=`<span style="color:#6f8073">${d.why||'위치를 넣으면 날씨를 받아 옵니다'}</span>`
+      +(d.error?`<br><span style="color:#c4643a">⚠️ ${d.error}</span>`:'');
+    return;
+  }
+  const n=d.now||{};
+  now.textContent=(n.temp_c!=null?`${n.temp_c}°C`:'')+(n.humidity_pct!=null?` · 습도 ${n.humidity_pct}%`:'');
+  const bits=[];
+  if(n.t_max!=null&&n.t_min!=null) bits.push(`오늘 ${n.t_min}~${n.t_max}°C`);
+  // 바깥 노지 흙이다 — 화분이 아니라는 걸 이름에 남겨야 오해가 없다.
+  if(n.soil_moisture!=null) bits.push(`바깥 흙 수분 ${(n.soil_moisture*100).toFixed(0)}%`);
+  if(n.soil_temp_c!=null) bits.push(`지온 ${n.soil_temp_c}°C`);
+  const w=d.water||{};
+  const eff = (w.days===0)
+    ? `<span style="color:#6f8073">${w.why||'물주기에 반영 없음'}</span>`
+    : `물주기 <b style="color:${w.days<0?'#e8a64a':'#7ddb9a'}">${w.days>0?'+':''}${w.days}일</b>`
+      +` <span style="color:#6f8073">${w.why||''}</span>`;
+  line.innerHTML=`<div>${d.site_name} · 반영 ${Math.round((d.coupling||0)*100)}%`
+    +(bits.length?` · ${bits.join(' · ')}`:'')+`</div><div>${eff}</div>`
+    // 노지 격자값을 화분 값인 양 읽으면 안 된다. 한 줄로 못 박아 둔다.
+    +(n.soil_moisture!=null?`<div style="color:#5c6b60">흙 값은 <b>바깥 땅</b> 추정치예요 — 화분 상토와는 다릅니다</div>`:'')
+    +(d.no_history?`<div style="color:#c8a05a">기상청은 지난 날을 안 줘서 평년 대비 보정이 약합니다</div>`:'')
+    +(d.stale_hours>6?`<div style="color:#c8a05a">받아 온 지 ${d.stale_hours}시간 됐어요</div>`:'')
+    +(d.error?`<div style="color:#c4643a">⚠️ ${d.error}</div>`:'');
+}
+async function saveSite(fields){
+  const msg=document.getElementById('wxMsg'); msg.textContent='저장 중…';
+  const fd=new FormData();
+  Object.entries(fields).forEach(([k,v])=>fd.append(k,v));
+  const r=await fetch('/api/site',{method:'POST',body:fd});
+  if(!r.ok){const e=await r.json().catch(()=>({}));msg.textContent='⚠️ '+(e.detail||'저장 실패');return;}
+  msg.textContent='✅ 저장됨';
+  await loadSite(); await loadAll();
+}
+document.getElementById('wxSave').addEventListener('click',()=>saveSite({
+  site:document.getElementById('wxSite').value,
+  lat:document.getElementById('wxLat').value.trim(),
+  lon:document.getElementById('wxLon').value.trim()}));
+document.getElementById('wxHere').addEventListener('click',()=>{
+  const msg=document.getElementById('wxMsg');
+  if(!navigator.geolocation){ msg.textContent='이 브라우저는 위치를 못 알려 줍니다 — 직접 넣어 주세요'; return; }
+  msg.textContent='위치 확인 중…';
+  navigator.geolocation.getCurrentPosition(
+    p=>{ document.getElementById('wxLat').value=p.coords.latitude.toFixed(4);
+         document.getElementById('wxLon').value=p.coords.longitude.toFixed(4);
+         msg.textContent='넣었어요 — 저장을 눌러 주세요'; },
+    ()=>{ msg.textContent='위치를 못 받았어요 — 직접 넣어 주세요'; });
+});
+document.getElementById('wxClear').addEventListener('click',async()=>{
+  await fetch('/api/site',{method:'DELETE'});
+  document.getElementById('wxLat').value=''; document.getElementById('wxLon').value='';
+  document.getElementById('wxMsg').textContent='위치를 지웠어요 — 날씨 반영이 꺼집니다';
+  await loadSite(); await loadAll();
+});
 
 // ===== 작물 =====
 // 무엇을 심었는지에 따라 물주기 간격·등급 기준치·필요 광량이 갈린다. 목록은
@@ -1729,7 +1838,7 @@ document.getElementById('mReFile').addEventListener('change',async(e)=>{
 addEventListener('resize',()=>{camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight);});
 (function loop(){requestAnimationFrame(loop);controls.update();renderer.render(scene,camera);})();
 // 작물 목록이 먼저 있어야 리스트·모달이 이름을 붙일 수 있다.
-loadEnvironment(); loadPots().then(loadLeaves); loadCrops().then(loadAll); loadCalib();
+loadEnvironment(); loadPots().then(loadLeaves); loadCrops().then(loadAll); loadCalib(); loadSite();
 </script>
 </body>
 </html>

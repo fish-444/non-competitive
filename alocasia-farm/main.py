@@ -46,12 +46,6 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from PIL import Image
 
-import crops
-import harvest
-import placement
-import providers
-import watering
-
 # --------------------------------------------------------------------------- 설정
 # 설정 파일 견본. 예전에는 farm_env.example.bat 을 저장소에 두고 "복사해서 이름을
 # 바꾸라"고 안내했는데, 그 두 단계에서 사고가 반복됐다 — 견본 쪽을 고쳐 놓고 왜
@@ -82,6 +76,11 @@ rem set LEAF_HEIGHT_CM=18
 
 rem 탐지 민감도 (낮출수록 잎을 더 많이 잡음, 기본 25)
 rem set CONFIDENCE=15
+
+rem 기상청 단기예보를 쓰려면 — 안 넣으면 Open-Meteo 로 돕니다(키 없이 됩니다).
+rem 공공데이터포털(data.go.kr)에서 '단기예보 조회서비스' 활용신청 후
+rem **일반 인증키(Decoding)** 를 넣으세요.
+rem set KMA_SERVICE_KEY=
 
 rem 저장 파일 위치 (기본: 이 폴더의 farm.db)
 rem set FARM_DB=D:\\백업\\farm.db
@@ -155,6 +154,24 @@ def _load_env_file() -> None:
 
 _ensure_env_file()
 _load_env_file()
+
+# 여기서야 우리 모듈을 불러온다 — **_load_env_file() 뒤여야 한다.**
+#
+# 예전엔 이 import 들이 파일 맨 위에 있었다. 그러면 crops·watering·placement·
+# providers 의 모듈 최상단 `os.environ.get(...)` 이 farm_env 를 읽기 **전에** 돌아서,
+# 그 파일에 적은 값이 통째로 무시됐다. `farm_env.bat` 이 광고하는 `set CONFIDENCE=15`
+# 가 아무 효과도 없었던 게 이것이다(넣어도 25.0 이 그대로 쓰였다). 값이 무시된다는
+# 신호가 어디에도 안 떠서, 민감도를 낮췄는데 왜 그대로냐는 물음만 남았다.
+#
+# 파이썬 관례상 import 는 위에 모으는 게 맞지만, 여기서는 **설정을 읽는 순서**가
+# 곧 동작이라 순서를 지키는 쪽을 골랐다. 표준 라이브러리와 외부 패키지는 위에
+# 그대로 있고, 환경변수를 보는 우리 모듈만 내려왔다.
+import crops                                          # noqa: E402
+import harvest                                        # noqa: E402
+import placement                                      # noqa: E402
+import providers                                      # noqa: E402
+import watering                                       # noqa: E402
+import weather                                        # noqa: E402
 
 
 def _report_env_file() -> None:
@@ -230,6 +247,15 @@ LEAF_FIXES: List[dict] = []           # [{"u","v","pot_slot"}]
 # 조명·팬 실측 위치(cm). 비어 있으면 placement 의 기본값을 쓴다.
 ENVIRONMENT: dict = {}
 
+# 이 온실이 어디에 있고 어떤 자리인가 — 기상 데이터를 얼마나 반영할지가 여기서
+# 갈린다. 비어 있으면 위치를 모르는 상태라 기상 기능이 통째로 꺼진다(예전 그대로).
+#   {"lat": 37.5665, "lon": 126.978, "site": "greenhouse", "name": "옥상 하우스"}
+SITE: dict = {}
+# 마지막으로 받아 온 기상 관측. 매번 부르면 느리고 상대 서버에도 못 할 짓이라
+# 한 번 받아 두고 WEATHER_TTL_HOURS 동안 쓴다. 껐다 켜도 남게 farm.db 에 넣는다.
+WEATHER: dict = {}
+WEATHER_TTL_HOURS = float(os.environ.get("WEATHER_TTL_HOURS", "3"))
+
 # 온실 전체를 찍은 사진들. 한 장이 여러 포기를 담으므로 화분마다 복사하지 않고
 # 여기 한 번만 쌓는다. 최신이 뒤로 간다.
 #   [{"id": scan_id, "at": "2026-08-06 10:19:00", "rel": "2026-08/scan_xx.jpg",
@@ -286,7 +312,8 @@ def save_state() -> None:
             for key, val in (("plants", PLANTS), ("pots", POTS),
                              ("leaves", LEAVES), ("leaf_fixes", LEAF_FIXES),
                              ("env", ENVIRONMENT), ("scans", SCANS),
-                             ("calib", CALIB)):
+                             ("calib", CALIB), ("site", SITE),
+                             ("weather", WEATHER)):
                 con.execute(
                     "INSERT INTO state(key,value) VALUES(?,?) "
                     "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
@@ -310,6 +337,8 @@ def load_state() -> None:
         ENVIRONMENT.update(json.loads(rows.get("env", "{}")))
         SCANS.extend(json.loads(rows.get("scans", "[]")))
         CALIB.update(json.loads(rows.get("calib", "{}")))
+        SITE.update(json.loads(rows.get("site", "{}")))
+        WEATHER.update(json.loads(rows.get("weather", "{}")))
         if PLANTS or POTS:
             print(f"[저장소] 식물 {len(PLANTS)}개 · 화분자리 {len(POTS)}개 · "
                   f"잎 {len(LEAVES)}장 불러옴 ({FARM_DB})")
@@ -1491,11 +1520,137 @@ def _stamp_harvest(plant: dict) -> None:
     '언제·얼마나' 세 줄만 얹고, 근거와 추세는 모달이 따로 부른다
     (측정 이력을 /api/plants 에 안 싣는 것과 같은 이유).
     """
-    got = harvest.forecast(plant)
+    got = harvest.forecast(plant, growth_factor=_growth_factor(plant))
     plant["harvest_on"] = got["ready_on"]
     plant["harvest_days"] = got["days_until"]
     plant["harvest_g"] = got["yield_g"]
     plant["harvest_ready"] = got["ready_now"]
+
+
+# --------------------------------------------------------------------------- 기상
+# 알로카시아 쪽은 날씨를 일부러 안 봤다(아래 물주기 구역의 주석에 근거가 있다).
+# 작물 온실은 전제가 다르다 — 비닐하우스는 바깥 기온이 거의 그대로 들어온다.
+# 그래도 **얼마나 반영할지는 앱이 정하지 않는다.** 사용자가 재배 환경을 고르면
+# 그 계수만큼만 보정하고, 기본값(실내)은 계수 0 이라 예전과 완전히 같다.
+def _weather_provider():
+    """기상 제공자. 환경변수를 이 안에서 읽는다(모듈 최상단에서 읽으면 굳는다)."""
+    return providers.select_weather()
+
+
+def _weather_obs(refresh: bool = False) -> dict:
+    """마지막으로 받아 온 기상. 오래됐으면 다시 받아 온다.
+
+    받아 오기가 실패해도 **예외를 위로 던지지 않는다.** 물주기 목록을 부를 때마다
+    기상 서버 사정으로 500 이 나면 앱을 못 쓰게 된다. 실패는 기록해 두고
+    (`error`), 계산은 보정 없이 예전 방식으로 돌아간다.
+    """
+    if not SITE.get("lat") or not SITE.get("lon"):
+        return {}
+    fresh = weather.stale_hours(WEATHER) <= WEATHER_TTL_HOURS
+    same = WEATHER.get("for") == f"{SITE['lat']},{SITE['lon']}"
+    if fresh and same and not refresh:
+        return WEATHER
+
+    try:
+        got = _weather_provider().fetch(float(SITE["lat"]), float(SITE["lon"]))
+        got["for"] = f"{SITE['lat']},{SITE['lon']}"
+        WEATHER.clear(); WEATHER.update(got)
+        save_state()
+    except Exception as e:                       # noqa: BLE001 — 앱을 죽이지 않는다
+        print(f"[기상] 받아오기 실패: {e}")
+        # 옛 값이라도 있으면 그걸 계속 쓴다. 화면은 stale_hours 로 낡은 걸 안다.
+        WEATHER["error"] = str(e)[:200]
+        if not WEATHER.get("daily"):
+            return {}
+    return WEATHER
+
+
+def _water_weather_days() -> float:
+    """지금 설정에서 물주기에 더할 날씨 보정(일). 위치를 안 넣었으면 0."""
+    return weather.water_adjust_days(_weather_obs(), SITE.get("site"))["days"]
+
+
+def _growth_factor(plant: dict) -> float:
+    """이 화분의 수확적기에 곱할 날씨 배율. 위치를 안 넣었으면 1.0."""
+    obs = _weather_obs()
+    if not obs:
+        return 1.0
+    canopy = harvest.trend(plant.get("growth_log") or [], "canopy_cm")
+    if not canopy["first_on"] or not canopy["last_on"]:
+        return 1.0
+    return weather.growth_factor(obs, crops.of(plant), canopy["first_on"],
+                                 canopy["last_on"], SITE.get("site"))["factor"]
+
+
+@app.get("/api/site")
+def get_site():
+    """온실 위치와 재배 환경. 기상 반영 세기가 여기서 정해진다."""
+    conf = weather.site(SITE.get("site"))
+    return {"lat": SITE.get("lat"), "lon": SITE.get("lon"),
+            "name": SITE.get("name") or "",
+            "site": conf["key"], "site_name": conf["name"],
+            "coupling": conf["coupling"], "rain": conf["rain"],
+            "sites": weather.listing(),
+            "provider": _weather_provider().label,
+            "configured": bool(SITE.get("lat") and SITE.get("lon"))}
+
+
+@app.post("/api/site")
+async def set_site(lat: str = Form(None), lon: str = Form(None),
+                   site: str = Form(None), name: str = Form(None)):
+    """온실 위치(위경도)와 재배 환경을 정한다.
+
+    위경도를 안 넣으면 기상 기능이 통째로 꺼진 상태로 남는다 — 그게 기본이다.
+    """
+    if isinstance(site, str) and site.strip():
+        if not weather.is_known_site(site.strip()):
+            raise HTTPException(400, f"재배 환경은 {' / '.join(weather.SITES)} "
+                                     f"중 하나예요.")
+        SITE["site"] = site.strip()
+    if isinstance(name, str):
+        SITE["name"] = name.strip()
+    for key, raw, lo, hi, what in (("lat", lat, -90, 90, "위도"),
+                                   ("lon", lon, -180, 180, "경도")):
+        if not isinstance(raw, str) or not raw.strip():
+            continue
+        try:
+            val = float(raw.strip())
+        except ValueError:
+            raise HTTPException(400, f"{what}는 숫자여야 해요.")
+        if not lo <= val <= hi:
+            raise HTTPException(400, f"{what}는 {lo}~{hi} 사이여야 해요.")
+        SITE[key] = round(val, 4)
+    save_state()
+    if SITE.get("lat") and SITE.get("lon"):
+        _weather_obs(refresh=True)               # 바로 한 번 받아 확인시켜 준다
+    return get_site()
+
+
+@app.delete("/api/site")
+def clear_site():
+    """위치를 지운다 — 기상 반영이 통째로 꺼지고 예전 계산으로 돌아간다."""
+    SITE.clear(); WEATHER.clear()
+    save_state()
+    return get_site()
+
+
+@app.get("/api/weather")
+def get_weather(refresh: int = 0):
+    """지금 바깥 날씨 + 이 설정에서 물주기·수확에 얼마나 반영되는지."""
+    obs = _weather_obs(refresh=bool(refresh))
+    conf = weather.site(SITE.get("site"))
+    if not obs:
+        return {"configured": False, "site": conf["key"], "site_name": conf["name"],
+                "why": "온실 위치를 넣으면 기상 자료를 받아 옵니다",
+                "error": WEATHER.get("error")}
+    return {"configured": True,
+            "site": conf["key"], "site_name": conf["name"],
+            "coupling": conf["coupling"],
+            "now": weather.now_summary(obs),
+            "water": weather.water_adjust_days(obs, conf["key"]),
+            "stale_hours": round(weather.stale_hours(obs), 1),
+            "no_history": bool(obs.get("no_history")),
+            "error": obs.get("error")}
 
 
 @app.get("/api/crops")
@@ -2093,9 +2248,16 @@ SIZE_TO_TOP_LEAF = {"소품": "소엽", "중품": "중엽", "대품": "대엽"}
 
 # --------------------------------------------------------------------------- 물주기
 # 센서가 없으니 실제 흙 수분은 모른다. 대신 "언제 물을 줬는지"만 사람이 기록하고,
-# 며칠 지났는지로 마름 위험을 보여준다. 날씨 API는 안 쓴다 — 온실 안은 냉난방으로
-# 외부 기온 영향이 작아서 굳이 외부 의존성을 늘일 이유가 없고, 여름 기준 일수만
-# 맞으면 충분하다는 판단(사람이 확인).
+# 며칠 지났는지로 마름 위험을 보여준다.
+#
+# 예전에는 여기 "날씨 API는 안 쓴다"고 적혀 있었다. 근거는 '온실 안은 냉난방으로
+# 외부 기온 영향이 작다' 였고, **거실 선반에서는 그 말이 맞다.** 작물 온실로
+# 넓히면서 전제가 갈렸다 — 비닐하우스는 바깥 기온이 거의 그대로 들어온다.
+#
+# 그래서 날씨를 보되, **얼마나 볼지는 앱이 정하지 않는다.** 사용자가 재배 환경
+# (실내/베란다/비닐하우스/노지)을 고르면 그 계수만큼만 보정한다. 기본값은 실내이고
+# 계수가 0 이라, 설정을 안 건드린 사람에게는 예전 판단이 그대로 남는다.
+# 자세한 근거는 weather.py 의 머리말에 있다.
 WATER_DRY_DAYS = int(os.environ.get("WATER_DRY_DAYS", "3"))    # 이 일수를 넘기면 마름 위험
 
 
@@ -2143,7 +2305,8 @@ def _augment_water(p: dict) -> None:
     p["days_since_watered"] = days
     # 다음 예정일 — 형이 준 간격과 프로필을 섞어 낸다(watering.recommend).
     # soil_dry 도 고정 3일이 아니라 그 포기의 예정일을 넘겼는지로 본다.
-    rec = watering.recommend(p)
+    # 날씨 보정은 위치를 안 넣었으면 0 이라, 예전과 같은 값이 나온다.
+    rec = watering.recommend(p, weather_days=_water_weather_days())
     p.update({k: rec[k] for k in ("next_water", "days_until", "interval_days",
                                   "basis", "soil", "own_interval_days")})
     p["soil_dry"] = bool(rec["overdue"] or (rec["next_water"] is None
@@ -2270,9 +2433,11 @@ def get_photo(rel: str):
 
 # 백업에 담을 것들. 저장(save_state)과 같은 목록이어야 한다 — 한쪽에만 있으면
 # 백업으로 되살렸을 때 조용히 빠진다.
+# 기상 관측(WEATHER)은 일부러 뺐다 — 언제든 다시 받아 오면 되는 값이고, 백업에
+# 담으면 복원한 순간 남의 지역 며칠 전 날씨가 '지금 날씨' 로 들어앉는다.
 BACKUP_PARTS = (("plants", PLANTS), ("pots", POTS), ("leaves", LEAVES),
                 ("leaf_fixes", LEAF_FIXES), ("env", ENVIRONMENT),
-                ("scans", SCANS), ("calib", CALIB))
+                ("scans", SCANS), ("calib", CALIB), ("site", SITE))
 BACKUP_VERSION = 1
 
 
@@ -2318,6 +2483,9 @@ def restore_payload(data: dict) -> dict:
 
     for key, cur in BACKUP_PARTS:
         val = state.get(key)
+        # 파트가 없는 옛 백업을 복원하면 그 파트는 빈 채로 남는다(온실 위치도
+        # 마찬가지다). 복원은 **통째로 갈아 끼우는 동작**이라 그게 맞고, 덮기 직전
+        # 상태가 farm-backup-이전.json 으로 떨어져 있어 되돌릴 길도 있다.
         cur.clear()
         if isinstance(cur, dict) and isinstance(val, dict):
             cur.update(val)
@@ -2482,7 +2650,8 @@ def plant_history(pid: str):
             "since": first.get("on") if first else None,
             # 이력을 그리는 자리에서 앞으로의 예측도 같이 본다 — 같은 기록에서
             # 나오는 값이라 따로 부르면 왕복만 한 번 는다.
-            "forecast": harvest.forecast(PLANTS[pid])}
+            "forecast": harvest.forecast(PLANTS[pid],
+                                         growth_factor=_growth_factor(PLANTS[pid]))}
 
 
 @app.get("/api/harvest")
@@ -2493,7 +2662,8 @@ def harvest_plan(days: int = harvest.FARM_WINDOW_DAYS):
     얼마나 나오나' 와 '오늘 딸 게 있나' 다.
     """
     days = max(1, min(365, days))
-    return harvest.farm_forecast(PLANTS.values(), window_days=days)
+    return harvest.farm_forecast(PLANTS.values(), window_days=days,
+                                 growth_factor_of=_growth_factor)
 
 
 @app.get("/api/plants/{pid}/forecast")
@@ -2501,7 +2671,8 @@ def plant_forecast(pid: str):
     """이 화분 하나의 수확적기·예상 생산량."""
     if pid not in PLANTS:
         raise HTTPException(404, "없는 식물")
-    return {"id": pid, **harvest.forecast(PLANTS[pid])}
+    return {"id": pid, **harvest.forecast(PLANTS[pid],
+                                          growth_factor=_growth_factor(PLANTS[pid]))}
 
 
 @app.get("/api/water-log")
@@ -2516,7 +2687,8 @@ def water_log(month: str = None):
             if month and not d.startswith(month):
                 continue
             counts[d] = counts.get(d, 0) + 1
-    due = watering.upcoming(PLANTS.values(), month) if month else {}
+    due = (watering.upcoming(PLANTS.values(), month,
+                             weather_days=_water_weather_days()) if month else {})
     return {"days": [{"date": d, "count": c} for d, c in sorted(counts.items())],
             "due": [{"date": d, "count": c} for d, c in sorted(due.items())]}
 
