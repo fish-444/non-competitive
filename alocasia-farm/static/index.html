@@ -553,14 +553,85 @@ function paintHeatmap(grid,kind){
 }
 
 // ===== 알로카시아 모델 =====
-function leafShape(){const s=new THREE.Shape();s.moveTo(0,2.1);
-  s.bezierCurveTo(1.05,1.7,0.95,0.25,0.6,-0.15);s.bezierCurveTo(0.45,-0.5,0.2,-0.5,0.06,-0.18);
-  s.lineTo(0,-0.02);s.lineTo(-0.06,-0.18);s.bezierCurveTo(-0.2,-0.5,-0.45,-0.5,-0.6,-0.15);
-  s.bezierCurveTo(-0.95,0.25,-1.05,1.7,0,2.1);return s;}
-const LEAF_GEO=new THREE.ShapeGeometry(leafShape(),10);
+// 잎 윤곽. 실물 사진(블랙벨벳)에 맞춘 값이다 — 끝은 둥글게 모이고, 가장 넓은
+// 곳이 가운데이며, 밑돌기(귀)가 깊고 둥글다. 예전엔 좁은 화살촉이라 어느 품종
+// 하고도 안 닮았다. 잎맥이 모이는 허브는 (0, 0.15) — 잎자루가 붙는 자리다.
+function leafShape(){const s=new THREE.Shape();s.moveTo(0,2.10);
+  s.bezierCurveTo(0.44,2.06,0.78,1.45,0.76,0.95);      // 끝 → 가장 넓은 곳
+  s.bezierCurveTo(0.74,0.42,0.71,0.02,0.62,-0.30);     // → 밑돌기 바깥
+  s.bezierCurveTo(0.55,-0.60,0.30,-0.63,0.16,-0.42);   // 귀를 둥글게 돌아
+  s.bezierCurveTo(0.08,-0.28,0.04,-0.05,0,0.15);       // 사이 홈(잎자루 자리)
+  s.bezierCurveTo(-0.04,-0.05,-0.08,-0.28,-0.16,-0.42);
+  s.bezierCurveTo(-0.30,-0.63,-0.55,-0.60,-0.62,-0.30);
+  s.bezierCurveTo(-0.71,0.02,-0.74,0.42,-0.76,0.95);
+  s.bezierCurveTo(-0.78,1.45,-0.44,2.06,0,2.10);return s;}
+const LEAF_GEO=new THREE.ShapeGeometry(leafShape(),12);
+// ShapeGeometry 의 UV 는 도형 좌표(-0.76~0.76, -0.63~2.10)가 그대로 들어간다.
+// 0~1 로 다시 재지 않으면 잎맥 텍스처가 엉뚱한 데 찍힌다.
+(function(){const pos=LEAF_GEO.attributes.position,uv=LEAF_GEO.attributes.uv;
+  LEAF_GEO.computeBoundingBox();const b=LEAF_GEO.boundingBox;
+  const sx=b.max.x-b.min.x,sy=b.max.y-b.min.y;
+  for(let i=0;i<pos.count;i++)uv.setXY(i,(pos.getX(i)-b.min.x)/sx,(pos.getY(i)-b.min.y)/sy);
+  uv.needsUpdate=true;})();
 const PET_MAT=new THREE.MeshStandardMaterial({color:0x4f8a44,roughness:0.7});
 // 잎 단계별 색: 새순=연두 / 성숙잎=녹색 / 늙은잎=노란색
 const STAGE_COL={shoot:0xa4e05a, mature:0x35913c, old:0xe0cf4a};
+// 잎맥 색. 알로카시아를 알로카시아로 보이게 하는 게 이 흰 잎맥이라 단계마다 따로 준다.
+// 반투명이어야 한다. 불투명한 흰 선을 그으면 멀리서 볼 때 잎이 아니라
+// 불꽃놀이처럼 보인다 — 실물도 잎맥은 바탕보다 옅을 뿐 새하얗지 않다.
+const VEIN_COL={shoot:'rgba(240,250,214,0.50)', mature:'rgba(214,235,208,0.46)',
+                old:'rgba(247,240,190,0.46)'};
+
+// 허브(잎자루가 붙는 곳)의 UV 세로 위치. 도형 좌표 y=0.15 를 0~1 로 옮긴 값.
+const LEAF_HUB_V=(0.15+0.63)/(2.10+0.63);
+// 잎맥 끝점 [u, v] — 실루엣 안쪽 가장자리에 맞춰 찍었다(반폭의 93%).
+const LEAF_VEINS=[[0.80,0.90],[0.91,0.79],[0.98,0.66],[1.00,0.52],
+                  [0.98,0.39],[0.96,0.25],[0.93,0.14]];
+
+function leafTexture(stage){
+  // CW/CH 는 캔버스 크기다. 전역 W(선반 가로 60)·D 와 헷갈리지 않게 이름을 다르게 뒀다.
+  const CW=256,CH=448,cv=document.createElement('canvas');cv.width=CW;cv.height=CH;
+  const x=cv.getContext('2d'),vein=VEIN_COL[stage];
+  const V=v=>CH*(1-v);                      // UV 세로 → 캔버스 세로(뒤집힘)
+  x.fillStyle='#'+STAGE_COL[stage].toString(16).padStart(6,'0');
+  x.fillRect(0,0,CW,CH);
+  // 벨벳 느낌 — 가운데를 살짝 밝게, 가장자리로 갈수록 어둡게
+  const g=x.createRadialGradient(CW*0.5,V(0.55),CW*0.1,CW*0.5,V(0.55),CW*0.95);
+  g.addColorStop(0,'rgba(255,255,255,0.10)');g.addColorStop(1,'rgba(0,0,0,0.22)');
+  x.fillStyle=g;x.fillRect(0,0,CW,CH);
+
+  const hx=CW*0.5,hy=V(LEAF_HUB_V),tipY=V(0.965),n=LEAF_VEINS.length;
+  x.strokeStyle=vein;x.lineCap='round';x.lineJoin='round';
+  // 주맥 — 두 번 나눠 그어 끝으로 갈수록 가늘어지게
+  x.lineWidth=CW*0.016;x.beginPath();x.moveTo(hx,hy);x.lineTo(hx,V(0.72));x.stroke();
+  x.lineWidth=CW*0.010;x.beginPath();x.moveTo(hx,V(0.72));x.lineTo(hx,tipY);x.stroke();
+  // 측맥 — 주맥에서 **조금씩 다른 높이로** 갈라져 나간다. 전부 한 점에서 뻗으면
+  // 잎이 아니라 우산살이 된다. 위쪽 측맥일수록 높은 데서 갈라진다.
+  LEAF_VEINS.forEach(([u,v],i)=>{
+    const inset=0.93,ex=CW*(0.5+(u-0.5)*inset),ey=V(v);
+    const sy=hy+(tipY-hy)*0.34*(n-1-i)/(n-1);     // 갈라지는 지점
+    [1,-1].forEach(side=>{
+      const tx=hx+(ex-hx)*side;
+      x.lineWidth=CW*(0.0105-0.0007*i);
+      x.beginPath();x.moveTo(hx,sy);
+      // 살짝 휘게 — 곧은 직선이면 딱딱해 보인다
+      x.quadraticCurveTo(hx+(tx-hx)*0.45,sy+(ey-sy)*0.62,tx,ey);x.stroke();
+    });
+  });
+  // 허브는 아주 옅게만. 밝게 하면 잎마다 흰 점이 박힌 것처럼 보인다.
+  const hg=x.createRadialGradient(hx,hy,0,hx,hy,CW*0.07);
+  hg.addColorStop(0,'rgba(255,255,255,0.16)');hg.addColorStop(1,'rgba(255,255,255,0)');
+  x.fillStyle=hg;x.beginPath();x.arc(hx,hy,CW*0.07,0,Math.PI*2);x.fill();
+
+  const t=new THREE.CanvasTexture(cv);t.anisotropy=4;return t;
+}
+// 단계마다 하나씩만 만든다. 예전엔 잎 한 장마다 새 재질을 만들어 화분 12개면
+// 재질이 168개 생겼다.
+const LEAF_MAT={};
+function leafMat(stage){
+  if(!LEAF_MAT[stage])LEAF_MAT[stage]=new THREE.MeshStandardMaterial(
+    {map:leafTexture(stage),roughness:0.62,side:THREE.DoubleSide});
+  return LEAF_MAT[stage];}
 function makeAlocasia(unit,counts){
   const seq=[];
   for(let i=0;i<(counts.old||0);i++) seq.push('old');
@@ -574,8 +645,7 @@ function makeAlocasia(unit,counts){
     const petH=(4+(i%3))*unit, lean=0.46+(i%2)*0.20;
     const pet=new THREE.Mesh(new THREE.CylinderGeometry(0.1*unit,0.16*unit,petH,5),PET_MAT);
     pet.position.set(px*0.5*unit,petH/2,pz*0.5*unit); pet.rotation.set(pz*lean,0,-px*lean); pet.castShadow=true; g.add(pet);
-    const mat=new THREE.MeshStandardMaterial({color:STAGE_COL[stage],roughness:0.5,side:THREE.DoubleSide});
-    const bl=new THREE.Mesh(LEAF_GEO,mat);
+    const bl=new THREE.Mesh(LEAF_GEO,leafMat(stage));
     const mul=stage==='shoot'?0.6:stage==='old'?1.15:1.0;         // 새순 작게, 늙은잎 크게
     const bs=(1.5+(i%3)*0.35)*unit*mul; bl.scale.set(bs,bs,bs);
     // 잎을 거의 수평으로 눕힌다(-90°가 완전 수평). 예전엔 -82° 쯤이라 들려 있어
