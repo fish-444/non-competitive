@@ -36,6 +36,8 @@
   .item:hover{border-color:#7ddb9a;background:#182a20}
   .item .nm{flex:1;font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .item .sz{font-size:11px;font-weight:700;padding:2px 8px;border-radius:20px;background:#24382c;color:#7ddb9a}
+  .item .cr:not(:empty){font-size:11px;font-weight:700;padding:2px 8px;border-radius:20px;background:#2a3348;color:#9fc0e8}
+  .item .hv:not(:empty){font-size:11px;font-weight:700;padding:2px 8px;border-radius:20px;background:#3d3720;color:#e8dda0}
   .item .x{color:#c98;font-size:16px;padding:0 3px;line-height:1}
   .item .x:hover{color:#f0a3a3}
   .empty{font-size:12px;color:#6f8073;text-align:center;padding:10px}
@@ -103,12 +105,41 @@
       <code>farm_env.bat</code> 의 키를 채운 뒤 서버를 껐다 켜세요.</span>
     </div>
   </div>
+  <!-- 기상 — 바깥 날씨를 얼마나 반영할지는 재배 환경이 정한다. 기본(실내)은 0 이라
+       설정을 안 건드리면 예전과 똑같이 동작한다. -->
+  <div class="form" style="border-bottom:1px solid rgba(120,180,140,.18);padding-bottom:11px">
+    <div style="display:flex;align-items:baseline;gap:6px">
+      <div style="font-size:12px;color:#cfe0d4">🌤️ <b>바깥 날씨</b></div>
+      <span id="wxNow" style="font-size:11px;color:#9fb4a6;margin-left:auto"></span>
+    </div>
+    <div id="wxLine" style="font-size:10.5px;color:#6f8073;margin-top:4px;line-height:1.6"></div>
+    <details id="wxSetup" style="margin-top:7px">
+      <summary style="font-size:11px;color:#9fb4a6;cursor:pointer">온실 위치·재배 환경 설정</summary>
+      <label style="display:block;font-size:11px;color:#9fb4a6;margin:7px 0 3px">재배 환경</label>
+      <select id="wxSite"></select>
+      <div id="wxSiteNote" style="font-size:10.5px;color:#6f8073;margin:4px 0 2px;line-height:1.5"></div>
+      <label style="display:block;font-size:11px;color:#9fb4a6;margin:7px 0 3px">위도 · 경도</label>
+      <div style="display:flex;gap:5px">
+        <input type="text" id="wxLat" placeholder="37.5665" style="flex:1;min-width:0" />
+        <input type="text" id="wxLon" placeholder="126.9780" style="flex:1;min-width:0" />
+      </div>
+      <div class="mrow" style="margin-top:6px">
+        <button type="button" class="mbtn" id="wxHere">📍 지금 위치로</button>
+        <button type="button" class="mbtn" id="wxSave">저장</button>
+      </div>
+      <button type="button" class="mbtn" id="wxClear" style="margin-top:5px">위치 지우기 (날씨 끄기)</button>
+      <div id="wxMsg" style="font-size:10.5px;color:#6f8073;margin-top:5px;min-height:1.2em"></div>
+    </details>
+  </div>
   <div class="form">
     <label>① 식물 이름</label>
     <input type="text" id="name" placeholder="예: 프라이덱, 흑룡, 거북알로카시아" maxlength="24" />
-    <label>② 식물 사진</label>
+    <label>② 무엇을 심었나요</label>
+    <select id="crop"></select>
+    <div id="cropNote" style="font-size:10.5px;color:#6f8073;margin:4px 0 2px;line-height:1.5"></div>
+    <label>③ 식물 사진</label>
     <input type="file" id="file" accept="image/*" />
-    <label>③ 자리 선택</label>
+    <label>④ 자리 선택</label>
     <select id="pos"></select>
     <button class="btn" id="addBtn" disabled>🌱 온실에 추가</button>
     <div id="status"></div>
@@ -212,6 +243,14 @@
       <button type="button" class="mbtn" id="plHeat">🌈 히트맵</button>
     </div>
     <div id="plPlan" style="display:none;margin-top:8px"></div>
+    <div style="display:flex;align-items:baseline;gap:8px;margin-top:14px;
+      border-top:1px solid rgba(120,180,140,.18);padding-top:11px">
+      <div style="font-size:12px;color:#cfe0d4">🧺 <b>수확 예정</b>
+        <span style="font-size:10px;color:#6f8073">앞으로 <span id="hvWin">30</span>일</span></div>
+      <b id="hvTotal" style="font-size:20px;color:#e8dda0;margin-left:auto">–</b>
+      <span style="font-size:11px;color:#6f8073">g</span>
+    </div>
+    <div id="hvList" style="font-size:10.5px;color:#6f8073;margin-top:5px;line-height:1.6"></div>
   </div>
   <div id="mapWrap">
     <h2>🗺️ 온실 자리 지도</h2>
@@ -241,7 +280,13 @@
     <div class="chips"><span class="chip" id="mSize"></span><span class="chip" id="mManual" style="display:none;background:#7a5c22">✋ 직접 수정함</span></div>
 
     <div style="font-size:11px;color:#9fb4a6;margin-bottom:5px">
-      크기 등급 — <b style="color:#cfe0d4">가장 큰 잎 길이</b>로 자동 판정 · 눌러서 바꾸기</div>
+      작물 — <b style="color:#cfe0d4">물주기 간격 · 등급 기준치 · 필요 광량</b>이 여기서 갈립니다</div>
+    <select id="mCrop" style="width:100%;font-size:12.5px;padding:8px;background:#14201a;
+      color:#e8f0ea;border:1px solid rgba(120,180,140,.3);border-radius:8px"></select>
+    <div id="mCropNote" style="font-size:10.5px;color:#6f8073;margin:4px 0 11px;min-height:1.2em;line-height:1.5"></div>
+
+    <div style="font-size:11px;color:#9fb4a6;margin-bottom:5px">
+      크기 등급 — <b style="color:#cfe0d4">그 작물 기준</b>으로 자동 판정 · 눌러서 바꾸기</div>
     <div class="szrow" id="mSizePick">
       <button type="button" data-sz="소품">소품</button>
       <button type="button" data-sz="중품">중품</button>
@@ -283,6 +328,7 @@
       <div id="mPhotos" style="margin-bottom:8px"></div>
       <div id="mLeafAge" style="margin-bottom:8px"></div>
       <div id="mGrowth" style="font-size:12px;color:#cfe0d4;margin-bottom:8px"></div>
+      <div id="mHarvest" style="font-size:12px;color:#cfe0d4;margin-bottom:8px"></div>
     </div>
     <div style="margin:0 0 13px;display:flex;align-items:center;justify-content:space-between;gap:10px;
       background:#1a2620;border-radius:0 0 9px 9px;padding:0 12px 9px">
@@ -654,7 +700,7 @@ async function loadAll(){
   document.getElementById('demoWarn').style.display = (d.engine==='demo') ? 'block' : 'none';
   Object.keys(objs).forEach(removeObj);
   computePotFit(d.plants);
-  d.plants.forEach(buildObj); refreshList(); await refreshSlots(); await loadLeaves(); await loadPlacement();
+  d.plants.forEach(buildObj); refreshList(); await refreshSlots(); await loadLeaves(); await loadPlacement(); await loadHarvest();
 }
 function refreshList(){
   const list=document.getElementById('list'); const items=Object.values(objs).map(o=>o.data);
@@ -664,8 +710,17 @@ function refreshList(){
   items.sort((a,b)=>(a.pos||'').localeCompare(b.pos||''));
   items.forEach(p=>{
     const el=document.createElement('div'); el.className='item';
-    el.innerHTML=`<span class="nm"></span><span class="sz"></span><span class="x">×</span>`;
+    el.innerHTML=`<span class="nm"></span><span class="hv"></span><span class="cr"></span><span class="sz"></span><span class="x">×</span>`;
     el.querySelector('.nm').textContent=(p.pos?p.pos+' · ':'')+p.name; const szEl=el.querySelector('.sz'); szEl.textContent=p.size_class;
+    // 작물 딱지는 기본 작물이 아닐 때만 — 알로카시아만 키우는 온실에서는 줄마다
+    // 같은 글자가 붙어 읽는 데 방해만 된다.
+    const crEl=el.querySelector('.cr');
+    if(p.crop&&p.crop!==CROP_DEFAULT) crEl.textContent=p.crop_name||cropBy(p.crop).name;
+    // 수확 딱지는 '오늘 딸 것' 과 '이번 주에 딸 것' 에만 붙인다. 두 달 뒤까지
+    // 다 붙이면 줄마다 딱지가 달려서 정작 급한 게 안 보인다.
+    const hvEl=el.querySelector('.hv');
+    if(p.harvest_ready) hvEl.textContent='🧺 오늘';
+    else if(p.harvest_days!=null&&p.harvest_days<=7) hvEl.textContent='🧺 '+p.harvest_days+'일';
     if(p.size_class==='미검출'){szEl.style.background='#4a3a1c';szEl.style.color='#e8c96a';}
     el.addEventListener('click',ev=>{ if(ev.target.classList.contains('x')){delPlant(p.id);ev.stopPropagation();return;} openModal(p); });
     list.appendChild(el);
@@ -694,6 +749,113 @@ async function refreshSlots(){
   });
 }
 
+// ===== 바깥 날씨 =====
+// 알로카시아 쪽은 날씨를 일부러 안 봤다. 작물 온실은 전제가 달라서 보되,
+// **얼마나 볼지는 사용자가 고른 재배 환경이 정한다.** 기본(실내)은 반영 0 이라
+// 위치를 넣어도 물주기·수확 숫자가 안 움직인다 — 그게 정상이고, 화면에도 그렇게 적는다.
+let SITES=[];
+async function loadSite(){
+  let d; try{ d=await(await fetch('/api/site')).json(); }catch(e){ return; }
+  SITES=d.sites||[];
+  const sel=document.getElementById('wxSite');
+  if(!sel.options.length){
+    SITES.forEach(s=>{const o=document.createElement('option');o.value=s.key;o.textContent=s.name;sel.appendChild(o);});
+    sel.addEventListener('change',()=>{
+      const s=SITES.find(x=>x.key===sel.value);
+      document.getElementById('wxSiteNote').textContent=s?s.note:'';
+    });
+  }
+  sel.value=d.site;
+  const cur=SITES.find(x=>x.key===d.site);
+  document.getElementById('wxSiteNote').textContent=cur?cur.note:'';
+  if(d.lat!=null) document.getElementById('wxLat').value=d.lat;
+  if(d.lon!=null) document.getElementById('wxLon').value=d.lon;
+  if(!d.configured) document.getElementById('wxSetup').open=true;
+  await loadWeather();
+}
+async function loadWeather(){
+  const now=document.getElementById('wxNow'), line=document.getElementById('wxLine');
+  let d; try{ d=await(await fetch('/api/weather')).json(); }catch(e){ return; }
+  if(!d.configured){
+    now.textContent='';
+    line.innerHTML=`<span style="color:#6f8073">${d.why||'위치를 넣으면 날씨를 받아 옵니다'}</span>`
+      +(d.error?`<br><span style="color:#c4643a">⚠️ ${d.error}</span>`:'');
+    return;
+  }
+  const n=d.now||{};
+  now.textContent=(n.temp_c!=null?`${n.temp_c}°C`:'')+(n.humidity_pct!=null?` · 습도 ${n.humidity_pct}%`:'');
+  const bits=[];
+  if(n.t_max!=null&&n.t_min!=null) bits.push(`오늘 ${n.t_min}~${n.t_max}°C`);
+  // 바깥 노지 흙이다 — 화분이 아니라는 걸 이름에 남겨야 오해가 없다.
+  if(n.soil_moisture!=null) bits.push(`바깥 흙 수분 ${(n.soil_moisture*100).toFixed(0)}%`);
+  if(n.soil_temp_c!=null) bits.push(`지온 ${n.soil_temp_c}°C`);
+  const w=d.water||{};
+  const eff = (w.days===0)
+    ? `<span style="color:#6f8073">${w.why||'물주기에 반영 없음'}</span>`
+    : `물주기 <b style="color:${w.days<0?'#e8a64a':'#7ddb9a'}">${w.days>0?'+':''}${w.days}일</b>`
+      +` <span style="color:#6f8073">${w.why||''}</span>`;
+  line.innerHTML=`<div>${d.site_name} · 반영 ${Math.round((d.coupling||0)*100)}%`
+    +(bits.length?` · ${bits.join(' · ')}`:'')+`</div><div>${eff}</div>`
+    // 노지 격자값을 화분 값인 양 읽으면 안 된다. 한 줄로 못 박아 둔다.
+    +(n.soil_moisture!=null?`<div style="color:#5c6b60">흙 값은 <b>바깥 땅</b> 추정치예요 — 화분 상토와는 다릅니다</div>`:'')
+    +(d.no_history?`<div style="color:#c8a05a">기상청은 지난 날을 안 줘서 평년 대비 보정이 약합니다</div>`:'')
+    +(d.stale_hours>6?`<div style="color:#c8a05a">받아 온 지 ${d.stale_hours}시간 됐어요</div>`:'')
+    +(d.error?`<div style="color:#c4643a">⚠️ ${d.error}</div>`:'');
+}
+async function saveSite(fields){
+  const msg=document.getElementById('wxMsg'); msg.textContent='저장 중…';
+  const fd=new FormData();
+  Object.entries(fields).forEach(([k,v])=>fd.append(k,v));
+  const r=await fetch('/api/site',{method:'POST',body:fd});
+  if(!r.ok){const e=await r.json().catch(()=>({}));msg.textContent='⚠️ '+(e.detail||'저장 실패');return;}
+  msg.textContent='✅ 저장됨';
+  await loadSite(); await loadAll();
+}
+document.getElementById('wxSave').addEventListener('click',()=>saveSite({
+  site:document.getElementById('wxSite').value,
+  lat:document.getElementById('wxLat').value.trim(),
+  lon:document.getElementById('wxLon').value.trim()}));
+document.getElementById('wxHere').addEventListener('click',()=>{
+  const msg=document.getElementById('wxMsg');
+  if(!navigator.geolocation){ msg.textContent='이 브라우저는 위치를 못 알려 줍니다 — 직접 넣어 주세요'; return; }
+  msg.textContent='위치 확인 중…';
+  navigator.geolocation.getCurrentPosition(
+    p=>{ document.getElementById('wxLat').value=p.coords.latitude.toFixed(4);
+         document.getElementById('wxLon').value=p.coords.longitude.toFixed(4);
+         msg.textContent='넣었어요 — 저장을 눌러 주세요'; },
+    ()=>{ msg.textContent='위치를 못 받았어요 — 직접 넣어 주세요'; });
+});
+document.getElementById('wxClear').addEventListener('click',async()=>{
+  await fetch('/api/site',{method:'DELETE'});
+  document.getElementById('wxLat').value=''; document.getElementById('wxLon').value='';
+  document.getElementById('wxMsg').textContent='위치를 지웠어요 — 날씨 반영이 꺼집니다';
+  await loadSite(); await loadAll();
+});
+
+// ===== 작물 =====
+// 무엇을 심었는지에 따라 물주기 간격·등급 기준치·필요 광량이 갈린다. 목록은
+// 서버(crops.py)가 갖고 있으니 한 번 받아 두 군데(추가 폼·모달)에 함께 쓴다.
+let CROPS=[], CROP_DEFAULT='alocasia';
+const cropBy=k=>CROPS.find(c=>c.key===k)||CROPS.find(c=>c.key===CROP_DEFAULT);
+function cropLine(c){
+  if(!c) return '';
+  const days=c.interval_days?` · 물 ${c.interval_days}일꼴`:'';
+  return `${c.kind}${days} · ${c.note}`;
+}
+function fillCropSelect(sel,picked){
+  sel.innerHTML='';
+  CROPS.forEach(c=>{const o=document.createElement('option');o.value=c.key;o.textContent=c.name+' ('+c.kind+')';sel.appendChild(o);});
+  sel.value=cropBy(picked)?cropBy(picked).key:CROP_DEFAULT;
+}
+async function loadCrops(){
+  let d; try{ d=await(await fetch('/api/crops')).json(); }catch(e){ return; }
+  CROPS=d.crops||[]; CROP_DEFAULT=d.default||CROP_DEFAULT;
+  const sel=document.getElementById('crop');
+  fillCropSelect(sel,CROP_DEFAULT);
+  const note=()=>document.getElementById('cropNote').textContent=cropLine(cropBy(sel.value));
+  sel.addEventListener('change',note); note();
+}
+
 // ===== 추가 =====
 const nameEl=document.getElementById('name'),fileEl=document.getElementById('file'),addBtn=document.getElementById('addBtn'),statusEl=document.getElementById('status');
 function chkForm(){addBtn.disabled=!(nameEl.value.trim()&&fileEl.files[0]);}
@@ -701,6 +863,7 @@ nameEl.addEventListener('input',chkForm); fileEl.addEventListener('change',chkFo
 addBtn.addEventListener('click',async()=>{
   addBtn.disabled=true; statusEl.textContent='분석 중…';
   const fd=new FormData(); fd.append('name',nameEl.value.trim()); fd.append('file',fileEl.files[0]); fd.append('pos',document.getElementById('pos').value);
+  fd.append('crop',document.getElementById('crop').value);
   try{
     const r=await fetch('/api/plants',{method:'POST',body:fd});
     if(!r.ok){const e=await r.json().catch(()=>({}));throw new Error(e.detail||'추가 실패');}
@@ -831,8 +994,34 @@ async function loadPlacement(){
   document.getElementById('plScore').textContent=d.spots.length?d.score:'–';
   document.getElementById('plWorst').innerHTML=d.worst.map(s=>
     `<div>${s.slot} <b style="color:${s.score<40?'#e8a64a':'#9fb4a6'}">${s.score}점</b>`
-    +` <span style="color:#5c6b60">빛 ${s.light} · 그늘 ${s.shade}</span></div>`).join('')
+    // 작물마다 필요한 빛이 달라서 같은 자리도 점수가 다르다 — 무엇이 놓였는지
+    // 안 보이면 '왜 여기가 나쁘지' 를 화면에서 알 수가 없다.
+    +(s.crop&&s.crop!==CROP_DEFAULT?` <span style="color:#9fc0e8">${s.crop_name}</span>`:'')
+    +` <span style="color:#5c6b60">빛 ${s.light} · 그늘 ${s.shade} · 필요 ${s.need_light}</span></div>`).join('')
     || '<div>식물을 등록하면 자리별 점수가 나옵니다</div>';
+}
+// 온실 전체 수확 계획 — 화분 하나씩 보면 '12일 뒤 40g' 이지만, 알고 싶은 건
+// '이번 달에 얼마나 나오나' 와 '오늘 딸 게 있나' 다.
+async function loadHarvest(){
+  let d; try{ d=await(await fetch('/api/harvest')).json(); }catch(e){ return; }
+  document.getElementById('hvWin').textContent=d.window_days;
+  document.getElementById('hvTotal').textContent=d.plants.length?d.total_g:'–';
+  const box=document.getElementById('hvList');
+  if(!d.plants.length){
+    box.innerHTML='<div>거두는 작물을 심으면 여기에 수확 예정이 뜹니다</div>'; return;
+  }
+  const line=p=>{
+    const when=p.ready_now?'<b style="color:#8fe36a">오늘</b>'
+      :(p.days_until!=null?`<b style="color:#7ddb9a">${p.days_until}일 뒤</b>`
+        :'<span style="color:#5c6b60">미정</span>');
+    const g=p.yield_g!=null?` ${p.yield_g}g${p.rough?'(어림)':''}`:'';
+    return `<div>${p.pos} ${p.crop_name} · ${when}${g}</div>`;
+  };
+  box.innerHTML=(d.ready_now?`<div style="color:#8fe36a;margin-bottom:3px">✅ 오늘 거둘 화분 ${d.ready_now}개</div>`:'')
+    // 다 늘어놓으면 왼쪽 패널이 화분 수만큼 길어진다. 급한 다섯만 보이고
+    // 나머지는 리스트·모달에서 본다.
+    +d.plants.slice(0,5).map(line).join('')
+    +(d.plants.length>5?`<div style="color:#5c6b60">… 외 ${d.plants.length-5}개</div>`:'');
 }
 document.getElementById('plOpt').addEventListener('click',async()=>{
   const box=document.getElementById('plPlan');
@@ -1201,6 +1390,9 @@ function openModal(p){
   sz.textContent=p.size_class+(p.canopy_cm?` · 포기 ${p.canopy_cm}cm`:(p.leaf_max_cm?` · 잎 ${p.leaf_max_cm}cm`:''));
   sz.style.background=(p.size_class==='미검출')?'#7a5c22':'#2e7d32';
   document.getElementById('mManual').style.display=p.manual?'inline-block':'none';
+  const mc=document.getElementById('mCrop');
+  fillCropSelect(mc,p.crop);
+  document.getElementById('mCropNote').textContent=cropLine(cropBy(mc.value));
   [...document.querySelectorAll('#mSizePick button')].forEach(b=>
     b.setAttribute('aria-pressed', b.dataset.sz===p.size_class ? 'true':'false'));
   document.getElementById('mShootN').textContent=(p.shoot_count!=null?p.shoot_count:'–');
@@ -1280,10 +1472,42 @@ async function drawLeafAge(pid){
 
 // 측정 이력 — 스캔할 때마다 한 줄씩 쌓인 크기·잎 수를 작은 그래프로.
 // /api/plants 에 안 싣고 따로 받는다(화분 50개 × 400일이면 목록이 느려진다).
+// 수확 — 생장 추세(같은 이력)에서 나온 '언제·얼마나'. 근거와 신뢰도를 같이 적는다.
+// 날짜만 크게 찍어 두면 기록이 두 번뿐인 예측도 확정처럼 읽힌다.
+function drawForecast(f){
+  const box=document.getElementById('mHarvest'); if(!box) return;
+  box.innerHTML='';
+  if(!f) return;
+  if(!f.harvestable){                       // 관상식물 — 수확이라는 개념이 없다
+    box.innerHTML=`<span style="color:#6f8073">🧺 <b>수확</b> — ${f.why}</span>`;
+    return;
+  }
+  const grams=f.yield_g!=null
+    ? ` · 예상 <b style="color:#e8dda0">${f.yield_g}g</b>${f.rough?'<span style="color:#6f8073">(어림)</span>':''}` : '';
+  let head;
+  if(f.ready_now) head=`<b style="color:#8fe36a">지금이 수확적기예요</b>${grams}`;
+  else if(f.days_until!=null)
+    head=`<b style="color:#7ddb9a">${f.days_until}일 뒤</b> <span style="color:#9fb4a6">${f.ready_on}</span>${grams}`;
+  else head=`<span style="color:#9fb4a6">아직 예측할 수 없어요</span>`;
+
+  const trend=[];
+  if(f.canopy_per_day!=null) trend.push(`포기 하루 ${f.canopy_per_day>0?'+':''}${f.canopy_per_day}cm`);
+  if(f.leaf_per_day!=null) trend.push(`잎 하루 ${f.leaf_per_day>0?'+':''}${f.leaf_per_day}장`);
+  if(f.canopy_now!=null&&f.target_cm!=null) trend.push(`지금 ${f.canopy_now}cm / 기준 ${f.target_cm}cm`);
+  if(f.confidence) trend.push(`신뢰도 ${f.confidence}(측정 ${f.points}회)`);
+
+  box.innerHTML=`🧺 <b>수확</b> — ${head}`
+    +`<div style="font-size:10px;color:#6f8073;margin-top:3px;line-height:1.5">${f.why}`
+    +(trend.length?`<br>${trend.join(' · ')}`:'')
+    // 열매는 탐지가 안 된다. 이 한 줄이 없으면 잎채소와 같은 근거로 읽힌다.
+    +(f.rough?`<br><span style="color:#c8a05a">열매는 탐지가 안 돼서 포기 크기로 어림한 값이에요</span>`:'')
+    +`</div>`;
+}
 async function drawGrowth(pid){
   const box=document.getElementById('mGrowth'); box.innerHTML='';
   let d={rows:[]};
   try{ d=await(await fetch(`/api/plants/${pid}/history`)).json(); }catch(e){ return; }
+  drawForecast(d.forecast);                 // 기록이 모자라도 '왜 못 내는지'는 보여 준다
   const rows=(d.rows||[]).filter(r=>r.canopy_cm!=null||r.leaf_count!=null);
   if(rows.length<2){
     box.innerHTML='<span style="color:#6f8073">📈 <b>성장</b> — 기록이 쌓이면 여기 그래프가 그려집니다'
@@ -1577,6 +1801,8 @@ async function patchPlant(fields){
 // 크기 등급
 document.querySelectorAll('#mSizePick button').forEach(b=>
   b.addEventListener('click',()=>patchPlant({size_class:b.dataset.sz})));
+// 작물 — 바꾸면 등급이 그 작물 기준으로 다시 매겨지고 물주기 예정일도 다시 잡힌다
+document.getElementById('mCrop').addEventListener('change',e=>patchPlant({crop:e.target.value}));
 // 흙 마름 — 예정일을 하루 당기거나 미룬다
 document.querySelectorAll('#mSoilPick button').forEach(b=>
   b.addEventListener('click',()=>patchPlant({soil:b.dataset.soil})));
@@ -1611,7 +1837,8 @@ document.getElementById('mReFile').addEventListener('change',async(e)=>{
 
 addEventListener('resize',()=>{camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight);});
 (function loop(){requestAnimationFrame(loop);controls.update();renderer.render(scene,camera);})();
-loadEnvironment(); loadPots().then(loadLeaves); loadAll(); loadCalib();
+// 작물 목록이 먼저 있어야 리스트·모달이 이름을 붙일 수 있다.
+loadEnvironment(); loadPots().then(loadLeaves); loadCrops().then(loadAll); loadCalib(); loadSite();
 </script>
 </body>
 </html>

@@ -105,3 +105,38 @@ def select() -> Tuple[Detector, Detector]:
     from .demo import DemoDetector
     one = DemoDetector()
     return one, one
+
+
+# --------------------------------------------------------------------------- 기상
+# 탐지기와 **같은 모양이되 다른 함수**다. select() 는 (탐지기, 탐지기) 쌍을
+# 돌려주는 탐지 전용 계약이라 여기에 기상을 얹으면 반환형이 뒤엉킨다.
+#
+# 제공자가 지켜야 할 약속도 하나뿐이다:
+#
+#     provider.fetch(lat, lon) -> {"source", "current": {...}, "daily": [{...}]}
+#
+# 해석은 weather.py 가 한다 — 이 층은 받아 오기만 한다.
+def select_weather():
+    """기상 제공자를 고른다. 기상청 키가 있으면 그쪽, 없으면 Open-Meteo.
+
+    키가 없어도 **진짜 값**이 나온다는 점이 탐지기와 다르다(탐지기는 키가 없으면
+    데모 난수로 착지한다). Open-Meteo 는 가입도 키도 없이 위경도만으로 되므로,
+    설정을 안 건드린 사용자도 기상 기능을 그대로 쓴다.
+
+    환경변수는 **이 함수 안에서** 읽는다. 모듈 최상단에서 읽으면 farm_env 를
+    불러오기 전 값이 굳어 버린다 — CONFIDENCE 가 오랫동안 죽어 있던 이유다.
+    """
+    if os.environ.get("WEATHER_PROVIDER", "").strip().lower() == "openmeteo":
+        from .weather_openmeteo import OpenMeteo
+        return OpenMeteo()
+
+    kma_key, warnings = clean_api_key(os.environ.get("KMA_SERVICE_KEY", ""))
+    for w in warnings:
+        print(f"[키 경고] 기상청 — {w}")
+    if kma_key:
+        from .weather_kma import KMA
+        print(f"[기상] 기상청 단기예보 · 키 {kma_key[:4]}… ({len(kma_key)}자)")
+        return KMA(kma_key)
+
+    from .weather_openmeteo import OpenMeteo
+    return OpenMeteo()

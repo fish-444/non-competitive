@@ -59,8 +59,11 @@ def _round_trip():
 # ── 무엇이 담기는가 ──────────────────────────────────────────────────────
 def test_the_backup_carries_every_part_that_gets_saved():
     """save_state 가 저장하는 것과 같은 목록이어야 한다 — 한쪽에만 있으면 조용히 빠진다."""
-    saved = {"plants", "pots", "leaves", "leaf_fixes", "env", "scans", "calib"}
+    # 기상 관측(WEATHER)은 일부러 뺐다 — 다시 받아 오면 되는 값이고, 담으면 복원한
+    # 순간 남의 지역 며칠 전 날씨가 '지금 날씨' 로 들어앉는다.
+    saved = {"plants", "pots", "leaves", "leaf_fixes", "env", "scans", "calib", "site"}
     assert {k for k, _ in main.BACKUP_PARTS} == saved
+    assert "weather" not in {k for k, _ in main.BACKUP_PARTS}
     _wipe()
 
 

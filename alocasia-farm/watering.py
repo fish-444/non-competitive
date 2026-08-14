@@ -26,6 +26,8 @@ import statistics
 from datetime import date, timedelta
 from typing import List
 
+import crops
+
 # 흙이 마르는 속도 — 화분마다 다르다. 프로필 값에서 며칠을 더하거나 뺄지.
 # 데이터셋이 관수 환경을 건조/일반/과습으로 나눈 것과 같은 이름을 쓴다.
 SOIL_ADJUST = {"건조": -1, "일반": 0, "과습": +1}
@@ -86,6 +88,20 @@ def _load_profile() -> dict:
 PROFILE = _load_profile()
 
 
+def profile_for(plant: dict) -> dict:
+    """그 화분에 적용할 물주기 프로필 — 심긴 작물이 정한다.
+
+    상추와 알로카시아를 같은 간격으로 주면 한쪽은 마르고 한쪽은 썩는다. 작물표에
+    그 작물의 달별 간격이 있으면 그걸 쓰고, 없으면 지금까지처럼 PROFILE 을 쓴다.
+
+    **기본 작물(알로카시아)은 일부러 작물표에 물주기를 안 적어 뒀다.** PROFILE
+    (water_profile.json 또는 DEFAULT_PROFILE)이 이미 알로카시아 기준(습생·거실)
+    이라, 작물표에 또 적으면 두 벌이 갈라진다 — 데이터셋으로 뽑아 덮어쓴 값이
+    작물표의 잠정값에 덮이는 사고가 난다.
+    """
+    return crops.of(plant).get("water") or PROFILE
+
+
 def profile_interval(when: date, profile: dict = None) -> float:
     """그 달에 프로필이 말하는 간격(일)."""
     p = PROFILE if profile is None else profile
@@ -129,30 +145,51 @@ def soil_of(plant: dict) -> str:
     return v if v in SOIL_ADJUST else SOIL_DEFAULT
 
 
-def plan_interval(plant: dict, when: date, profile: dict = None) -> tuple:
-    """(간격, 근거설명) — 프로필에 흙 상태만큼 더하거나 뺀다."""
-    prof = profile_interval(when, profile)
+def plan_interval(plant: dict, when: date, profile: dict = None,
+                  weather_days: float = 0.0) -> tuple:
+    """(간격, 근거설명) — 프로필에 흙 상태와 날씨만큼 더하거나 뺀다.
+
+    profile 을 직접 주면 그게 이긴다(테스트·미리보기용). 안 주면 그 화분에
+    심긴 작물의 프로필을 쓴다.
+
+    `weather_days` 는 weather.water_adjust_days 가 낸 값이다 — 요즘이 그 계절
+    평년보다 얼마나 메마른가. **기본값 0 이라 안 주면 예전과 똑같다.** 흙 상태
+    보정과 따로 더하는 건, 흙 상태는 그 화분의 성질(사람이 고름)이고 날씨는
+    바깥 사정이라 서로 상쇄하거나 대체하는 값이 아니기 때문이다.
+    """
+    used = profile_for(plant) if profile is None else profile
+    prof = profile_interval(when, used)
     soil = soil_of(plant)
     adj = SOIL_ADJUST[soil]
-    interval = max(MIN_INTERVAL, min(MAX_INTERVAL, prof + adj))
+    try:
+        extra = float(weather_days or 0.0)
+    except (TypeError, ValueError):
+        extra = 0.0
+    interval = max(MIN_INTERVAL, min(MAX_INTERVAL, prof + adj + extra))
 
-    src = (PROFILE if profile is None else profile).get("source") or "기본값"
+    src = used.get("source") or "기본값"
     why = f"{src} {prof:.0f}일"
     if adj:
         why += f" {adj:+d}일 (흙 {soil}·{SOIL_LABEL[soil]})"
+    if extra:
+        why += f" {extra:+.1f}일 (날씨)"
     return interval, why
 
 
-def recommend(plant: dict, today: date = None, profile: dict = None) -> dict:
+def recommend(plant: dict, today: date = None, profile: dict = None,
+              weather_days: float = 0.0) -> dict:
     """다음에 물 줄 날. 기록이 하나도 없으면 예정일을 만들지 않는다.
 
     한 번도 안 준 포기에 '오늘부터 4일 뒤' 라고 찍으면 근거 없는 날짜가 달력에
     박힌다. 마지막으로 준 날이 있어야 거기서부터 셀 수 있다.
+
+    `weather_days` 는 그대로 plan_interval 로 넘어간다. 모달과 달력이 서로 다른
+    날짜를 말하지 않으려면 **둘 다 같은 보정을 받아야** 해서 여기까지 꿴다.
     """
     today = today or date.today()
     log = plant.get("water_log") or []
     last = plant.get("last_watered")
-    interval, why = plan_interval(plant, today, profile)
+    interval, why = plan_interval(plant, today, profile, weather_days)
 
     # 형이 실제로 준 간격 — 계산에는 안 쓰고 비교용으로만 얹는다.
     gaps = own_intervals(log)
@@ -175,7 +212,8 @@ def recommend(plant: dict, today: date = None, profile: dict = None) -> dict:
     return out
 
 
-def upcoming(plants, month: str, today: date = None, profile: dict = None) -> dict:
+def upcoming(plants, month: str, today: date = None, profile: dict = None,
+             weather_days: float = 0.0) -> dict:
     """그 달(YYYY-MM)에 물 줄 예정인 날짜 → 화분 수. 달력에 옅게 찍는 데 쓴다.
 
     이미 지난 예정일은 넣지 않는다 — 지난 날짜 칸에는 '실제로 준 기록' 만
@@ -184,7 +222,7 @@ def upcoming(plants, month: str, today: date = None, profile: dict = None) -> di
     today = today or date.today()
     due: dict = {}
     for p in plants:
-        r = recommend(p, today, profile)
+        r = recommend(p, today, profile, weather_days)
         d = r["next_water"]
         if d and d.startswith(month) and d >= today.isoformat():
             due[d] = due.get(d, 0) + 1
