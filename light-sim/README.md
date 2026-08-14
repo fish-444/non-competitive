@@ -10,6 +10,7 @@ python main.py config.yaml --compare config_alt.yaml
 python main.py config.yaml --optimize          # 화분 배치를 다시 짠다
 python main.py config.yaml --out 결과폴더
 python validate.py config.yaml measured.csv   # 실측값과 맞춰 본다
+python farm_bridge.py 백업.json -o shelf.yaml # 알로카시아팜에서 설정을 만든다
 pytest -q
 ```
 
@@ -106,6 +107,79 @@ initial_temp 를 올려 보라" 고 말해 준다. 예시 설정에서는 5개 �
 깐다. 최고 기록만 그리면 항상 예쁘게 내려가서 SA 가 실제로 언덕을 넘고 있는지
 안 보인다 — 요동이 처음부터 없으면 온도가 너무 낮은 것이고, 끝까지 안 잦아들면
 너무 높은 것이다.
+
+## 알로카시아팜 연동 (`farm_bridge.py`)
+
+화분의 키·캐노피·LAI 를 손으로 적는 대신 앱이 사진에서 잰 값을 그대로 쓴다.
+
+```
+python farm_bridge.py ../alocasia-farm/farm-backup.json -o shelf.yaml
+python farm_bridge.py 백업.json -o shelf.yaml --heights 키.csv --ppf 180
+python main.py shelf.yaml --optimize
+```
+
+| 시뮬레이터 입력 | 어디서 | 믿을 만한가 |
+|---|---|---|
+| `canopy_radius` | `canopy_cm / 2` | 사진 실측 |
+| `leaf_area_index` | `leaf_count` 와 `leaf_max_cm` 로 계산 | 계산값 |
+| `plant_height` | `size_class` / `leaf_max_cm` 로 추정 | **추정** ← 가장 약한 값 |
+
+**LAI 는 추측이 아니라 정의가 그대로 계산식이다** — 잎 면적의 합 ÷ 그 포기가 덮는
+지면 면적. 앱이 잎 개수와 잎 크기를 개체별로 재고 있으니 바로 나온다:
+
+```
+잎 한 장 ≈ LEAF_AREA_FACTOR x (평균 잎 긴변)²      (0.42, 하트형 잎)
+평균 잎  ≈ MEAN_OVER_MAX_LEAF x leaf_max_cm       (0.75, leaf_max 는 '가장 큰' 잎)
+LAI = 잎 개수 x 잎 한 장 면적 ÷ (π x 캐노피반지름²)
+```
+
+캐노피 반지름이 잎 길이에 비례하므로 약분되어 **LAI ≈ 0.075 × 잎 개수** 가 된다 —
+포기 크기와 거의 무관하고 잎 수가 지배한다. 두 상수는 실측으로 갈아 끼울 자리라
+이름을 붙여 두었다. 차폐를 지배하는 게 LAI 라서, 여기가 추측값이면 최적화 결과도
+같이 추측이 된다.
+
+**키만은 탑다운 사진으로 못 잰다.** 앱의 등급 추정을 그대로 가져오되, 화분당 한 번
+줄자로 재서 `--heights` CSV(`slot,height_cm`)로 넣으면 그쪽이 이긴다. 키는 빨리
+안 변하니 한 번 재면 오래 쓴다. 어느 포기가 추정값인지는 출력과 YAML 주석에
+모두 남는다.
+
+### 단위·좌표계 함정
+
+| | 알로카시아팜 | light-sim |
+|---|---|---|
+| 길이 | cm | m |
+| 좌표축 | (x=좌우, y=**높이**, z=앞뒤) | (x=좌우, y=**앞뒤**, z=높이) |
+| 빔 각도 | `angle` = **반각** | `beam_angle` = **전체각** |
+
+빔 각도를 그대로 넘기면 빔이 절반으로 좁아져 가장자리가 통째로 어두워진다.
+세 가지 모두 테스트로 걸어 뒀다.
+
+### 연동해야 보이는 것
+
+두 앱을 붙이면 어느 쪽도 혼자서는 못 잡는 문제가 드러난다. 실행하면 이런 경고가
+나온다:
+
+```
+[경고]
+  - 조명(47cm)보다 큰 포기 4개: 실버드래곤(49cm), 아마조니카(57cm), …
+     이 포기들은 계산상 빛을 0 으로 받습니다.
+  - 어떤 조명 빔에도 안 들어가는 자리 4개: 드래곤스케일(r0c3), 폴리(r1c1), …
+     스팟등 반각 30도로는 선반 60x40cm 를 다 못 덮습니다.
+```
+
+앱은 사진만 보니 조명 높이를 모르고, 시뮬레이터는 설정만 보니 식물이 자랐다는
+걸 모른다. **식물이 조명 높이를 넘어섰다**는 건 둘을 붙여야 나온다.
+
+격자로 옮기며 생긴 위치 오차(`snap_error_cm`)도 같이 낸다. light-sim 은 규칙적인
+격자를 쓰는데 사진에서 잡힌 위치는 조금씩 어긋나기 때문이다. 이 값이 크면 애초에
+격자로 볼 배치가 아니라는 뜻이라 그때는 `--rows/--cols` 로 맞춰야 한다.
+
+### 조명 세기를 모를 때
+
+`--ppf` 는 등의 사양서 값(µmol/s)인데 모르면 기본값 100(상대값)으로 둔다. 그러면
+절대 PPFD·DLI 는 못 믿는다. **다만 균일도(CV)와 배치 최적화는 그대로 유효하다** —
+전체를 같은 배로 곱해도 `CV = 표준편차/평균` 은 변하지 않기 때문이다. 즉 조명
+사양을 몰라도 "어느 배치가 더 고른가" 는 지금 바로 답할 수 있다.
 
 ## 실측 검증 (`validate.py`)
 
@@ -223,7 +297,8 @@ xy 를 재면 그 자체가 오차가 된다. `row/col` 로 적으면 시뮬레�
 | `visualize.py` | 히트맵, 비교 그림, 수렴 그래프 |
 | `main.py` | CLI, CSV |
 | `validate.py` | 실측값과의 비교 (자체 CLI) |
-| `test_light.py` / `test_optimize.py` / `test_validate.py` | pytest 93개 |
+| `farm_bridge.py` | 알로카시아팜 백업 → 설정 (자체 CLI) |
+| `test_*.py` | pytest 134개 |
 
 ## 테스트
 
