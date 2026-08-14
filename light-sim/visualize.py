@@ -95,6 +95,43 @@ def heatmap(data: np.ndarray, title: str, cbar_label: str, fmt: str = ".0f",
     return fig
 
 
+def convergence(runs, ylabel: str = "목적함수 (작을수록 좋음)",
+                path: Optional[str] = None):
+    """SA 수렴 그래프. 시드별 '여태 최고' 곡선과, 첫 시드의 탐색 흔적.
+
+    최고 기록만 그리면 예쁘게 내려가는 계단이 나오지만 SA 가 실제로 언덕을
+    넘고 있는지는 안 보인다. 첫 시드의 현재 점수를 옅게 깔아 그 요동을 같이
+    보여 준다 — 요동이 처음부터 없으면 온도가 너무 낮은 것이고, 끝까지
+    안 잦아들면 너무 높은 것이다.
+    """
+    fig, ax = plt.subplots(figsize=(9.2, 5.0))
+
+    if runs:
+        first = runs[0]
+        ax.plot(first.history, color="#c7cdd6", linewidth=.7, zorder=1,
+                label=f"시드 {first.seed} 의 현재 점수 (탐색 흔적)")
+        ax.axhline(first.initial_score, color="#d9534f", linestyle="--", linewidth=1.1,
+                   zorder=2, label=f"시작 배치 {first.initial_score:.4f}")
+
+    cmap = plt.get_cmap("viridis")
+    for i, r in enumerate(runs):
+        ax.plot(r.best_curve, linewidth=1.6, zorder=3,
+                color=cmap(0.08 + 0.78 * i / max(1, len(runs) - 1)),
+                label=f"시드 {r.seed} -> {r.score:.4f}")
+
+    ax.set_xlabel("iteration")
+    ax.set_ylabel(ylabel)
+    ax.set_title(f"SA 수렴 — 시드 {len(runs)}개", fontsize=11, pad=10)
+    ax.grid(alpha=.25, linewidth=.7)
+    ax.legend(fontsize=8, loc="upper right", framealpha=.92)
+    fig.tight_layout()
+
+    if path:
+        fig.savefig(path, dpi=150)
+        plt.close(fig)
+    return fig
+
+
 def compare(a: np.ndarray, b: np.ndarray, label_a: str, label_b: str,
             cbar_label: str, fmt: str = ".0f", path: Optional[str] = None):
     """두 배치를 위아래로 놓고, 아래에 차이(b−a)를 그린다.

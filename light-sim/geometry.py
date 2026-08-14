@@ -83,6 +83,26 @@ class Grid:
 
 
 @dataclass
+class SAParams:
+    """모의 담금질(simulated annealing) 설정.
+
+    목적함수는 score = w_cv·CV + w_mean·(1/평균PPFD) 이고 **작을수록 좋다**.
+    기본은 w_mean=0, 즉 균일도만 본다 — 농가에서는 총량보다 고르게 자라는 쪽이
+    값을 받기 때문이다. 총 광량도 같이 보려면 w_mean 을 올린다.
+
+    두 항은 크기가 많이 다르다. CV 는 0.1~0.3, 1/평균PPFD 는 0.005 언저리다.
+    w_mean 을 1 로 두면 사실상 CV 만 보는 것과 같고, 진짜로 저울질을 하려면
+    w_mean 은 수십~수백이어야 한다.
+    """
+    initial_temp: float = 0.0             # 0 이하면 자동 보정 (calibrate_temperature)
+    cooling_rate: float = 0.9993          # 매 iteration 마다 T ← T·이 값
+    iterations: int = 6000
+    seeds: int = 5                        # 지역 최적 확인용 반복 실행 횟수
+    w_cv: float = 1.0
+    w_mean: float = 0.0
+
+
+@dataclass
 class Config:
     space: Space
     grid: Grid
@@ -91,6 +111,7 @@ class Config:
     photoperiod_hours: float = 16.0
     extinction_k: float = 0.7             # 소산계수. 3번 사양의 k
     label: str = "layout"
+    sa: SAParams = field(default_factory=SAParams)
 
 
 def pot_xy(pot: Pot, grid: Grid, space: Space) -> Tuple[float, float]:
@@ -150,7 +171,21 @@ def load_config(path: str) -> Config:
             raise ValueError(f"격자 위치 {p.grid_position} 에 화분이 둘입니다.")
         seen[p.grid_position] = p
 
+    o = raw.get("optimize") or {}
+    d = SAParams()
+    sa = SAParams(initial_temp=float(o.get("initial_temp", d.initial_temp)),
+                  cooling_rate=float(o.get("cooling_rate", d.cooling_rate)),
+                  iterations=int(o.get("iterations", d.iterations)),
+                  seeds=int(o.get("seeds", d.seeds)),
+                  w_cv=float(o.get("w_cv", d.w_cv)),
+                  w_mean=float(o.get("w_mean", d.w_mean)))
+    if not 0.0 < sa.cooling_rate < 1.0:
+        raise ValueError("optimize.cooling_rate 는 0 과 1 사이여야 합니다 "
+                         f"(받은 값 {sa.cooling_rate}). 1 이면 식지 않습니다.")
+    if sa.iterations < 1 or sa.seeds < 1:
+        raise ValueError("optimize.iterations 와 optimize.seeds 는 1 이상이어야 합니다.")
+
     return Config(space=space, grid=grid, lights=lights, pots=pots,
                   photoperiod_hours=float(raw.get("photoperiod_hours", 16.0)),
                   extinction_k=float(raw.get("extinction_k", 0.7)),
-                  label=str(raw.get("label", "layout")))
+                  label=str(raw.get("label", "layout")), sa=sa)

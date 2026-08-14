@@ -138,6 +138,80 @@ def compute_ppfd(cfg: Config) -> np.ndarray:
     return out
 
 
+# --------------------------------------------------------------------------- 합산 (배열판)
+def compute_ppfd_fast(cfg: Config) -> np.ndarray:
+    """compute_ppfd 와 **같은 값**을 numpy 로 한 번에 계산한다.
+
+    물리는 위와 똑같다. 다른 건 순서뿐 — (광원 M) × (수광점 P) × (가리는 것 P) 를
+    파이썬 반복문 대신 배열 하나로 민다. 최적화가 이 함수를 수천 번 부르는데
+    반복문판은 한 번에 6 ms 라 SA 한 판이 분 단위가 된다.
+
+    같은 답이 나오는지는 test_light.py 가 무작위 배치로 매번 맞춰 본다 —
+    빠른 쪽이 조용히 갈라지면 최적화가 엉뚱한 배치를 고르기 때문이다.
+    """
+    pots, lights = cfg.pots, cfg.lights
+    out = np.full((cfg.grid.rows, cfg.grid.cols), np.nan, dtype=float)
+    if not pots:
+        return out
+    if not lights:
+        for pot in pots:
+            out[pot.row, pot.col] = 0.0
+        return out
+
+    n = len(pots)
+    xy = np.array([pot_xy(p, cfg.grid, cfg.space) for p in pots], dtype=float)   # (P,2)
+    z_top = np.array([p.plant_height for p in pots], dtype=float)                # (P,)
+    radius = np.array([p.canopy_radius for p in pots], dtype=float)
+    tau = np.array([transmittance(p.leaf_area_index, cfg.extinction_k) for p in pots])
+
+    R = np.column_stack([xy, z_top])                                            # (P,3) 수광점
+    L = np.array([g.position for g in lights], dtype=float)                     # (M,3)
+    I0 = np.array([g.peak_intensity for g in lights], dtype=float)              # (M,)
+    cos_max = np.cos(np.array([g.half_angle_rad for g in lights], dtype=float))
+
+    # ── 직달광: E = I₀·cos²θ/d². 빔 밖과 광원보다 높은 점은 0 ─────────────
+    D = R[None, :, :] - L[:, None, :]                       # (M,P,3) 광원→수광점
+    d2 = (D * D).sum(axis=2)                                # (M,P)
+    d = np.sqrt(np.maximum(d2, 1e-24))
+    cos_t = -D[:, :, 2] / d
+    lit = (D[:, :, 2] < 0) & (d2 > 1e-12) & (cos_t >= cos_max[:, None]) & (cos_t > 0)
+    direct = np.where(lit, I0[:, None] * cos_t * cos_t / np.maximum(d2, 1e-24), 0.0)
+
+    # ── 차폐: 선분(광원 m → 수광점 p) 대 원기둥 q. 축 순서는 (M, P, Q) ────
+    dx, dy, dz = D[:, :, 0:1], D[:, :, 1:2], D[:, :, 2:3]           # (M,P,1)
+    fx = (L[:, 0][:, None] - xy[:, 0][None, :])[:, None, :]         # (M,1,Q) 광원 - 원기둥 중심
+    fy = (L[:, 1][:, None] - xy[:, 1][None, :])[:, None, :]
+
+    a = dx * dx + dy * dy                                   # (M,P,1)
+    b = 2.0 * (fx * dx + fy * dy)                           # (M,P,Q)
+    c = fx * fx + fy * fy - (radius * radius)[None, None, :]        # (M,1,Q)
+    disc = b * b - 4.0 * a * c
+
+    vertical = np.broadcast_to(a <= 1e-15, disc.shape)      # 연직 광선 — xy 로 안 움직인다
+    sq = np.sqrt(np.maximum(disc, 0.0))
+    safe_a = np.where(a <= 1e-15, 1.0, a)
+    lo = np.maximum((-b - sq) / (2.0 * safe_a), 0.0)
+    hi = np.minimum((-b + sq) / (2.0 * safe_a), 1.0)
+    crosses = (disc >= 0) & (lo <= hi)
+    # 연직이면 근을 못 쓴다 — 원 안이면 선분 전체가 후보 구간
+    lo = np.where(vertical, 0.0, lo)
+    hi = np.where(vertical, 1.0, hi)
+    crosses = np.where(vertical, np.broadcast_to(c <= 0, disc.shape), crosses)
+
+    zl = L[:, 2][:, None, None]
+    za, zb = zl + dz * lo, zl + dz * hi
+    hit = (crosses & (np.minimum(za, zb) <= z_top[None, None, :])
+           & (np.maximum(za, zb) >= 0.0)
+           & (radius > 0)[None, None, :] & (z_top > 0)[None, None, :])
+    hit[:, np.arange(n), np.arange(n)] = False              # 자기 자신은 뺀다
+
+    shading = np.prod(np.where(hit, tau[None, None, :], 1.0), axis=2)   # (M,P)
+
+    for pot, v in zip(pots, (direct * shading).sum(axis=0)):
+        out[pot.row, pot.col] = v
+    return out
+
+
 def dli(ppfd: np.ndarray, photoperiod_hours: float) -> np.ndarray:
     """DLI(mol/m²/day) = PPFD × 광주기. µmol→mol 이라 1e-6, 시간→초라 3600."""
     return ppfd * photoperiod_hours * 3600.0 / 1e6

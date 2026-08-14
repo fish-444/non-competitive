@@ -12,8 +12,8 @@ import numpy as np
 import pytest
 
 from geometry import Config, Grid, Light, Pot, Space, pot_xy, receiver_point
-from light import (compute_ppfd, direct_ppfd, dli, ppfd_at, segment_hits_cylinder,
-                   shading_factor, transmittance, uniformity_cv)
+from light import (compute_ppfd, compute_ppfd_fast, direct_ppfd, dli, ppfd_at,
+                   segment_hits_cylinder, shading_factor, transmittance, uniformity_cv)
 
 
 # ── 차폐 판정: 사양이 요구한 세 경우 ──────────────────────────────────────
@@ -191,6 +191,58 @@ def test_empty_cells_stay_nan():
     grid = compute_ppfd(_cfg([Pot((0, 0), 0.3, 0.1, 1.0)]))
     assert not np.isnan(grid[0, 0])
     assert np.isnan(grid[0, 1]) and np.isnan(grid[0, 2])
+
+
+# ── 배열판이 반복문판과 같은가 ────────────────────────────────────────────
+def _random_layout(rng, rows=4, cols=6, n_pots=14, n_lights=3):
+    cells = [(r, c) for r in range(rows) for c in range(cols)]
+    rng.shuffle(cells)
+    pots = [Pot(grid_position=cell,
+                plant_height=float(rng.uniform(0.05, 1.4)),
+                canopy_radius=float(rng.uniform(0.0, 0.30)),
+                leaf_area_index=float(rng.uniform(0.0, 5.0)))
+            for cell in cells[:n_pots]]
+    lights = [Light(position=(float(rng.uniform(-0.4, 2.4)),
+                              float(rng.uniform(-0.4, 1.4)),
+                              float(rng.uniform(0.9, 2.1))),
+                    ppf=float(rng.uniform(100, 900)),
+                    beam_angle=float(rng.uniform(40, 170))) for _ in range(n_lights)]
+    return Config(space=Space(2.0, 1.0, 2.2),
+                  grid=Grid(rows=rows, cols=cols, row_spacing=0.25, col_spacing=0.25),
+                  lights=lights, pots=pots, photoperiod_hours=16.0,
+                  extinction_k=0.7, label="rnd")
+
+
+@pytest.mark.parametrize("seed", range(12))
+def test_the_fast_array_version_matches_the_loop_version(seed):
+    """최적화가 쓰는 배열판이 참조 구현과 갈라지면 엉뚱한 배치를 고르게 된다.
+
+    무작위 배치로 매번 맞춰 본다 — 키·반지름 0 과 빔 밖까지 섞어서 뽑으므로
+    경계 처리(반지름 0, 빔 컷오프, 광원보다 높은 수광점)도 같이 걸린다.
+    """
+    cfg = _random_layout(np.random.default_rng(seed))
+    slow, fast = compute_ppfd(cfg), compute_ppfd_fast(cfg)
+    assert (np.isnan(slow) == np.isnan(fast)).all()
+    np.testing.assert_allclose(slow[~np.isnan(slow)], fast[~np.isnan(fast)], rtol=1e-12)
+
+
+def test_the_fast_version_handles_a_light_straight_overhead():
+    """광원이 수광점 바로 위면 광선이 연직이라 원과의 근이 없다 — 별도 갈래."""
+    cfg = _cfg([Pot((0, 1), 0.4, 0.15, 2.0), Pot((0, 0), 1.2, 0.15, 2.0)],
+               [Light(position=(1.0, 0.5, 1.8), ppf=500, beam_angle=170)])
+    # (0,1) 은 격자 한가운데 = 공간 한가운데 = 광원 바로 아래
+    np.testing.assert_allclose(compute_ppfd(cfg)[0, 1], compute_ppfd_fast(cfg)[0, 1],
+                               rtol=1e-12)
+
+
+def test_the_fast_version_survives_empty_input():
+    assert np.isnan(compute_ppfd_fast(_cfg([]))).all()
+    # 광원이 없으면 0. (_cfg 는 lights=[] 를 기본값으로 바꿔 버리므로 직접 만든다)
+    dark = Config(space=Space(2.0, 1.0, 2.0),
+                  grid=Grid(rows=1, cols=3, row_spacing=0.3, col_spacing=0.3),
+                  lights=[], pots=[Pot((0, 0), 0.3, 0.1, 1.0)])
+    assert compute_ppfd_fast(dark)[0, 0] == 0.0
+    assert compute_ppfd(dark)[0, 0] == 0.0
 
 
 # ── 지표 ──────────────────────────────────────────────────────────────────

@@ -237,3 +237,18 @@ pots:
     plant_height: 0.35
     canopy_radius: 0.11
     leaf_area_index: 2.4
+
+# 배치 최적화 (모의 담금질). --optimize 를 줬을 때만 쓴다.
+#
+# 목적함수 score = w_cv x CV + w_mean x (1/평균PPFD), 작을수록 좋다.
+# 기본은 균일도만 본다(w_mean: 0) — 총량보다 고르게 자라는 쪽이 값을 받으니까.
+# 총 광량도 같이 보려면 w_mean 을 올리는데, CV 는 0.1~0.3 이고 1/평균PPFD 는
+# 0.005 언저리라 자릿수가 다르다. w_mean 이 1 이면 사실상 CV 만 보는 것과 같고,
+# 실제로 저울질하려면 수십~수백을 줘야 한다. (예: w_mean: 30 이면 두 항이 비슷)
+optimize:
+  w_cv: 1.0
+  w_mean: 0.0
+  initial_temp: 0        # 0 이면 자동 보정 — 무작위 교환의 평균 악화폭을 재서 정한다
+  cooling_rate: 0.9993   # 매 iteration T x= 이 값. 6000회면 T 가 1/74 로 내려간다
+  iterations: 6000
+  seeds: 5               # 지역 최적 확인용. 시드를 바꿔 몇 번 돌릴지
