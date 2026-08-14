@@ -1,0 +1,10 @@
+# 저장소에는 LF로 저장합니다. Windows 작업 트리에서는 그대로 두어
+# 편집기가 만든 줄바꿈 때문에 문서 전체가 변경으로 잡히는 일을 막습니다.
+* text=auto eol=lf
+
+# 데이터 파일은 텍스트 변환 대상이 아닙니다.
+*.csv  text eol=lf
+*.xlsx binary
+*.pdf  binary
+*.hwp  binary
+*.hwpx binary

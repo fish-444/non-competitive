@@ -1,5 +1,29 @@
 # 이 저장소에서 작업할 때
 
+## 먼저 — 어느 브랜치에 있는지 본다
+
+이 저장소에는 서로 무관한 작업물 둘이 브랜치를 나눠 들어 있다.
+
+| 브랜치 | 작업물 | 규칙 |
+| --- | --- | --- |
+| `main` | `alocasia-farm/`, `light-sim/` | 아래 전부 |
+| `field-track` | `field-track/` | **아래 규칙은 해당 없다.** `field-track/CLAUDE.md` 를 따른다 |
+
+아래 내용은 전부 알로카시아 이야기다. `field-track` 브랜치에서 작업 중이면
+여기 적힌 브랜치·테스트·커밋 금지 항목을 알로카시아 것으로 읽고 넘어가라.
+
+원격에는 아직 병합 안 된 브랜치가 더 있다. **`main` 만 보고 "없다"고 하지 마라** —
+이 저장소는 단일 브랜치로 클론돼 있어서 `git fetch` 만으로는 안 내려온다.
+
+```bash
+git fetch origin '+refs/heads/*:refs/remotes/origin/*'
+```
+
+| 브랜치 | 들어 있는 것 |
+| --- | --- |
+| `claude/crop-greenhouse-implementation-rzsqhd` | `alocasia-farm/` 의 `crops.py`·`harvest.py`·`weather.py`·`providers/weather_kma.py`, `docs/claude-project/` |
+| `claude/greenlight-casadi-dynamics-pa4ppq` | `greenlight/` — GreenLight-Gym 동역학을 MPC 에 쓸 수 있는지 조사한 결과 |
+
 ## 여기가 알로카시아 스마트팜의 본거지다
 
 원래 `fish-444/first-contributions` 의 `claude/alocasia-canopy-deployment-check-0u21bk`
@@ -9,8 +33,12 @@
 
 ## 브랜치
 
-`main` 에서 작업한다. `alocasia-farm/install.ps1` 이 `$Branch = 'main'` 을 보고
+**알로카시아는** `main` 에서 작업한다. `alocasia-farm/install.ps1` 이 `$Branch = 'main'` 을 보고
 설치하기 때문에, 옆 브랜치에 올리면 사용자가 설치해도 그 변경이 안 따라온다.
+
+이건 설치 스크립트 때문이지 저장소 전체 규칙이 아니다. `field-track` 은 설치되는 물건이
+아니라서 자기 브랜치에 있어도 된다 — 오히려 `main` 에 섞으면 알로카시아 쪽 파일 목록만
+지저분해진다.
 
 ## 고치고 나면 반드시 두 가지를 돌린다
 
