@@ -2023,6 +2023,13 @@ SIZE_CLASSES = ("소품", "중품", "대품")
 # 표시만 바뀌고 3D 는 그대로라 "고쳤는데 반영이 안 된다"로 보인다.
 SIZE_TO_TOP_LEAF = {"소품": "소엽", "중품": "중엽", "대품": "대엽"}
 
+# 3D 온실이 그리는 잎 모양. 알로카시아는 품종마다 잎 생김새가 확연히 달라서
+# 하나로 그리면 어느 품종도 안 닮는다. 이름으로 자동 추정하되(프런트의 leafKind)
+# 사람이 직접 고를 수 있게 열어 둔다 — 품종명을 안 적거나 이름이 제각각일 수 있다.
+#   A 넓은 하트 (블랙벨벳·드래곤스케일)  B 화살촉·물결 (아마조니카·폴리)
+#   C 길쭉 (사리안·롱길로바)             auto 는 이름으로 자동
+LEAF_TYPES = ("A", "B", "C")
+
 
 # --------------------------------------------------------------------------- 물주기
 # 센서가 없으니 실제 흙 수분은 모른다. 대신 "언제 물을 줬는지"만 사람이 기록하고,
@@ -2466,7 +2473,8 @@ def grade_by_canopy_cm(canopy_cm: float) -> str:
 async def update_plant(pid: str, name: str = Form(None), rot: float = Form(None),
                        note: str = Form(None), size_class: str = Form(None),
                        shoot_count: int = Form(None), mature_count: int = Form(None),
-                       old_count: int = Form(None), soil: str = Form(None)):
+                       old_count: int = Form(None), soil: str = Form(None),
+                       leaf_type: str = Form(None)):
     """이름 · 화분 방향 · 메모 · 그리고 사람이 직접 고치는 값들.
 
     사진이 뭉개지거나 잎이 가려지면 탐지가 틀립니다. 그럴 때 손으로 바로잡으라고
@@ -2496,6 +2504,23 @@ async def update_plant(pid: str, name: str = Form(None), rot: float = Form(None)
             raise HTTPException(400, f"흙 상태는 {'/'.join(watering.SOIL_ADJUST)} 중 하나예요.")
         p["soil"] = soil
         _augment_water(p)
+
+    # 잎 모양은 **보이는 방식**이지 탐지값이 아니다. 그래서 manual 표시도, 생육
+    # 이력 기록도 안 남긴다 (메모·흙 상태와 같은 취급).
+    #
+    # '자동'으로 되돌릴 때 빈 문자열이 아니라 "auto" 를 쓴다. FastAPI 가 빈 폼
+    # 문자열을 None 으로 바꿔 버려서, HTTP 로 오면 '빈 값'과 '안 보냄'이 구분되지
+    # 않기 때문이다. 파이썬에서 직접 부르면 ""가 그대로 와서 테스트만 통과하고
+    # 실제 화면에선 안 지워지는, 눈에 안 띄는 종류의 버그가 된다.
+    if isinstance(leaf_type, str):
+        lt = leaf_type.strip().upper()
+        if lt in ("", "AUTO"):
+            p.pop("leaf_type", None)            # 이름으로 추정하는 기본 동작으로
+        elif lt in LEAF_TYPES:
+            p["leaf_type"] = lt
+        else:
+            raise HTTPException(
+                400, f"잎 모양은 {' / '.join(LEAF_TYPES)} 또는 auto 여야 해요.")
 
     if size_class is not None:
         if size_class not in SIZE_CLASSES:

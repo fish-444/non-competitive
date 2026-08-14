@@ -257,6 +257,16 @@
     </div>
 
     <div style="font-size:11px;color:#9fb4a6;margin:11px 0 5px">
+      잎 모양 — 3D 온실에 그려지는 <b style="color:#cfe0d4">잎 생김새</b> ·
+      <span id="mLeafAuto" style="color:#7ddb9a"></span></div>
+    <div class="szrow" id="mLeafPick">
+      <button type="button" data-lt="auto" title="품종 이름으로 자동 판정">자동</button>
+      <button type="button" data-lt="A" title="블랙벨벳·드래곤스케일">A 하트</button>
+      <button type="button" data-lt="B" title="아마조니카·폴리">B 화살촉</button>
+      <button type="button" data-lt="C" title="사리안·롱길로바">C 길쭉</button>
+    </div>
+
+    <div style="font-size:11px;color:#9fb4a6;margin:11px 0 5px">
       잎 개수 — <b style="color:#cfe0d4">−/+</b> 로 고치세요 (성엽 −1, 노엽 +1 = 단계 이동)
     </div>
     <div class="grid">
@@ -556,21 +566,21 @@ function paintHeatmap(grid,kind){
 // 잎 모양 3종. 사진에 나온 세 계열을 그대로 옮겼다 — 알로카시아는 품종마다
 // 잎 생김새가 확연히 달라서, 하나로 그리면 어느 것도 안 닮는다.
 //
-//   round   넓은 하트. 끝이 둥글고 귀가 깊다      블랙벨벳·드래곤스케일·레지널드
-//   arrow   좁고 길며 가장자리가 물결친다         아마조니카·폴리·프라이덱
-//   oblong  아주 길쭉하고 귀도 좁다               사리안·롱길로바·바기나타
+//   A  넓은 하트. 끝이 둥글고 귀가 깊다      블랙벨벳·드래곤스케일·레지널드
+//   B  좁고 길며 가장자리가 물결친다         아마조니카·폴리·프라이덱
+//   C  아주 길쭉하고 귀도 좁다               사리안·롱길로바·바기나타
 //
 // segs 는 오른쪽 절반의 베지어 구간이고, 왼쪽은 거울로 만든다(x 만 뒤집는다).
 // hub 는 잎자루가 붙는 자리 = 잎맥이 모이는 점. veins 는 [u, v] 로 적은 잎맥 끝.
 const LEAF_SHAPES={
-  round:{ hub:0.15, scale:1.00,
+  A:{ hub:0.15, scale:1.00,
     segs:[[[0.52,2.04],[0.92,1.40],[0.90,0.92]],
           [[0.88,0.40],[0.84,0.02],[0.72,-0.32]],
           [[0.62,-0.64],[0.32,-0.68],[0.17,-0.44]],
           [[0.09,-0.29],[0.04,-0.06],[0,0.15]]], tip:2.10,
     veins:[[0.78,0.93],[0.88,0.84],[0.96,0.73],[1.00,0.61],
            [1.00,0.49],[0.98,0.36],[0.96,0.24],[0.92,0.13]] },
-  arrow:{ hub:0.18, scale:0.92,
+  B:{ hub:0.18, scale:0.92,
     segs:[[[0.30,2.10],[0.62,1.55],[0.56,1.15]],
           [[0.52,0.92],[0.66,0.78],[0.60,0.55]],      // 가장자리 물결
           [[0.55,0.32],[0.68,0.14],[0.58,-0.10]],
@@ -578,7 +588,7 @@ const LEAF_SHAPES={
           [[0.12,-0.40],[0.05,-0.10],[0,0.18]]], tip:2.35,
     veins:[[0.70,0.93],[0.84,0.84],[0.94,0.73],[0.96,0.61],
            [0.99,0.49],[0.98,0.36],[1.00,0.24],[0.95,0.13]] },
-  oblong:{ hub:0.16, scale:0.85,
+  C:{ hub:0.16, scale:0.85,
     segs:[[[0.22,2.40],[0.46,1.70],[0.44,1.10]],
           [[0.43,0.60],[0.42,0.18],[0.38,-0.18]],
           [[0.34,-0.62],[0.22,-0.80],[0.13,-0.60]],
@@ -615,12 +625,16 @@ for(const kind in LEAF_SHAPES){
 
 // 이름으로 품종을 알아본다. 3D 온실이 실물과 닮아 보이려면 이게 있어야 한다.
 const LEAF_KIND_BY_NAME=[
-  [/블랙\s*벨벳|블벨|레지널드|레지나|regin|드래곤|dragon|마하리아니|maharani|쿠쿨라타|cucullata|멜로|melo|실버/i,'round'],
-  [/아마조니카|amazonica|폴리|polly|제브리나|zebrina|프라이덱|frydek|micholitziana|질럿|jacklyn|스텔라|stella/i,'arrow'],
-  [/사리안|sarian|롱길로바|longiloba|바기나타|vaginata|티니|tiny|클립|clyp/i,'oblong'],
+  [/블랙\s*벨벳|블벨|레지널드|레지나|regin|드래곤|dragon|마하리아니|maharani|쿠쿨라타|cucullata|멜로|melo|실버/i,'A'],
+  [/아마조니카|amazonica|폴리|polly|제브리나|zebrina|프라이덱|frydek|micholitziana|질럿|jacklyn|스텔라|stella/i,'B'],
+  [/사리안|sarian|롱길로바|longiloba|바기나타|vaginata|티니|tiny|클립|clyp/i,'C'],
 ];
 const LEAF_KINDS=Object.keys(LEAF_SHAPES);
+const LEAF_TYPE_LABEL={A:'A · 넓은 하트',B:'B · 화살촉',C:'C · 길쭉'};
 function leafKind(p){
+  // 사람이 고른 값이 최우선이다. 품종명을 안 적거나 이름이 제각각일 수 있어서
+  // 자동 추정만으로는 늘 맞출 수 없다.
+  if(p&&LEAF_SHAPES[p.leaf_type]) return p.leaf_type;
   const name=(p&&p.name)||'';
   for(const [re,kind] of LEAF_KIND_BY_NAME) if(re.test(name)) return kind;
   // 모르는 이름은 id 로 고르되 **항상 같은 답**이 나오게 한다. 무작위로 두면
@@ -652,7 +666,7 @@ function leafTexture(kind,stage){
   x.fillStyle=g;x.fillRect(0,0,CW,CH);
 
   const hx=CW*0.5,hy=V(LEAF_HUB_V),tipY=V(0.965),n=LEAF_VEINS.length;
-  x.strokeStyle=vein;x.lineCap='round';x.lineJoin='round';
+  x.strokeStyle=vein;x.lineCap='A';x.lineJoin='A';
   // 주맥 — 두 번 나눠 그어 끝으로 갈수록 가늘어지게
   x.lineWidth=CW*0.016;x.beginPath();x.moveTo(hx,hy);x.lineTo(hx,V(0.72));x.stroke();
   x.lineWidth=CW*0.010;x.beginPath();x.moveTo(hx,V(0.72));x.lineTo(hx,tipY);x.stroke();
@@ -1347,6 +1361,12 @@ function openModal(p){
   const wi=document.getElementById('mWaterInfo');
   document.querySelectorAll('#mSoilPick button').forEach(b=>
     b.setAttribute('aria-pressed', b.dataset.soil===(p.soil||'일반') ? 'true':'false'));
+  // 잎 모양 — 고른 게 없으면 '자동'이 눌린 상태로 두고, 자동이 뭘 골랐는지 옆에 적는다.
+  // 안 적으면 '자동'을 눌러 놓고도 어떤 모양이 그려지는지 알 수 없다.
+  document.querySelectorAll('#mLeafPick button').forEach(b=>
+    b.setAttribute('aria-pressed', b.dataset.lt===(p.leaf_type||'auto') ? 'true':'false'));
+  document.getElementById('mLeafAuto').textContent =
+    p.leaf_type ? '' : ('자동 판정: '+(LEAF_TYPE_LABEL[leafKind(p)]||'–'));
   if(p.days_since_watered==null) wi.innerHTML='기록 없음';
   else{
     let t=`물 준 지 <b style="color:${p.soil_dry?'#e8a64a':'#7ddb9a'}">${p.days_since_watered}일째</b>`
@@ -1711,6 +1731,9 @@ document.querySelectorAll('#mSizePick button').forEach(b=>
 // 흙 마름 — 예정일을 하루 당기거나 미룬다
 document.querySelectorAll('#mSoilPick button').forEach(b=>
   b.addEventListener('click',()=>patchPlant({soil:b.dataset.soil})));
+// 잎 모양 — 빈 값이면 자동(품종 이름으로 판정)으로 되돌린다
+document.querySelectorAll('#mLeafPick button').forEach(b=>
+  b.addEventListener('click',()=>patchPlant({leaf_type:b.dataset.lt})));
 // 잎 −/+ (성엽 −1 · 노엽 +1 로 단계 이동)
 document.querySelectorAll('.cnt button').forEach(b=>b.addEventListener('click',()=>{
   if(!modalId)return;

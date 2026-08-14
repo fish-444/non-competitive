@@ -60,7 +60,7 @@ def _plant(**kw):
 def _patch(**kw):
     args = {"name": None, "rot": None, "note": None, "size_class": None,
             "shoot_count": None, "mature_count": None, "old_count": None,
-            "soil": None}
+            "soil": None, "leaf_type": None}
     args.update(kw)
     return asyncio.run(main.update_plant(pid="t1", **args))
 
@@ -672,3 +672,72 @@ if __name__ == "__main__":
         t()
         print(f"  ✔ {t.__name__}")
     print(f"\n{len(tests)}개 통과")
+
+
+# ── 잎 모양 (3D 에 그려지는 생김새) ───────────────────────────────────────
+def test_leaf_type_can_be_chosen():
+    """품종명을 안 적거나 이름이 제각각일 수 있어 자동 추정만으로는 못 맞춘다."""
+    _plant()
+    assert _patch(leaf_type="A")["leaf_type"] == "A"
+    assert _patch(leaf_type="C")["leaf_type"] == "C"
+    _reset()
+
+
+def test_leaf_type_accepts_lowercase():
+    _plant()
+    assert _patch(leaf_type="b")["leaf_type"] == "B"
+    _reset()
+
+
+def test_auto_goes_back_to_automatic():
+    """'auto' 는 필드를 지워 이름으로 추정하는 기본 동작으로 돌린다."""
+    _plant()
+    _patch(leaf_type="A")
+    assert "leaf_type" not in _patch(leaf_type="auto")
+    _reset()
+
+
+def test_clearing_works_over_http_not_just_in_python():
+    """FastAPI 는 빈 폼 문자열을 None 으로 바꾼다 — 그래서 '자동'은 "auto" 로 보낸다.
+
+    빈 문자열로 지우게 두면 파이썬에서 직접 부르는 테스트만 통과하고 실제
+    화면에서는 안 지워진다. 두 경로 모두에서 지워지는지 여기서 못박는다.
+    """
+    _plant()
+    _patch(leaf_type="B")
+    assert "leaf_type" not in _patch(leaf_type="AUTO")     # 대소문자 무관
+    _patch(leaf_type="B")
+    assert "leaf_type" not in _patch(leaf_type="")         # 직접 호출 경로도 여전히 지원
+    _reset()
+
+
+def test_an_unknown_leaf_type_is_rejected():
+    _plant()
+    try:
+        _patch(leaf_type="Z")
+    except HTTPException as e:
+        assert e.status_code == 400
+    else:
+        raise AssertionError("없는 잎 모양은 거부해야 한다")
+    _reset()
+
+
+def test_leaving_leaf_type_untouched_keeps_the_old_value():
+    """leaf_type 을 안 보내면(None) 고른 모양이 그대로 있어야 한다."""
+    _plant()
+    _patch(leaf_type="C")
+    assert _patch(name="이름만 변경")["leaf_type"] == "C"
+    _reset()
+
+
+def test_choosing_a_leaf_type_is_not_a_manual_correction():
+    """잎 모양은 보이는 방식이지 탐지값이 아니다 — 메모·흙 상태와 같은 취급.
+
+    manual 로 찍히면 '사람이 고친 값' 배지가 뜨고 생육 이력에도 남는데, 그건
+    잎 개수나 크기 등급을 고쳤을 때 얘기다.
+    """
+    _plant()
+    p = _patch(leaf_type="B")
+    assert "manual" not in p
+    assert len(p.get("growth_log") or []) == 0
+    _reset()
