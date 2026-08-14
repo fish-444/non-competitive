@@ -1,0 +1,8 @@
+# npx skills 로 설치한 스킬 본문. skills-lock.json 이 출처와 해시를 다 담고 있어
+# 거기서 다시 받으면 되므로 저장소에는 안 넣는다 (package-lock.json 은 넣고
+# node_modules 는 안 넣는 것과 같다). .claude/skills 는 이쪽을 가리키는 심링크다.
+.agents/skills/
+.claude/skills/
+
+__pycache__/
+*.pyc
