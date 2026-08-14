@@ -647,12 +647,19 @@ function makeAlocasia(unit,counts){
     pet.position.set(px*0.5*unit,petH/2,pz*0.5*unit); pet.rotation.set(pz*lean,0,-px*lean); pet.castShadow=true; g.add(pet);
     const bl=new THREE.Mesh(LEAF_GEO,leafMat(stage));
     const mul=stage==='shoot'?0.6:stage==='old'?1.15:1.0;         // 새순 작게, 늙은잎 크게
-    const bs=(1.5+(i%3)*0.35)*unit*mul; bl.scale.set(bs,bs,bs);
-    // 잎을 거의 수평으로 눕힌다(-90°가 완전 수평). 예전엔 -82° 쯤이라 들려 있어
-    // 옆에서 보면 서로 겹쳐 뭉쳐 보였다. 층마다 조금씩 달리 눕혀 z-파이팅을 피한다.
-    const tilt=-Math.PI/2+0.02+(i%3)*0.03;
-    // 눕히면 잎이 더 넓게 보이므로 바깥으로 더 밀어 겹침을 줄인다.
-    const reach=0.5*unit+petH*0.5*lean+bs*0.42;
+    const bs=(1.5+(i%3)*0.35)*unit*mul;
+    // 새순은 아직 돌돌 말려 있어 폭이 좁다 — 가로만 줄여 만 잎처럼 보이게 한다.
+    bl.scale.set(bs*(stage==='shoot'?0.45:1),bs,bs);
+    // 단계마다 잎이 서 있는 각도가 다르다(-90°가 완전 수평, 0°가 수직).
+    // 실물을 옆에서 보면 새순은 거의 곧추서 있고, 성숙잎이 비스듬히 펴지고,
+    // 늙은잎은 수평 아래로 처진다. 예전엔 셋 다 -90°라 층이 안 보였다.
+    const STAGE_TILT={shoot:-0.42, mature:-1.15, old:-Math.PI/2-0.16};
+    const tilt=STAGE_TILT[stage]+(i%3)*0.05;   // 같은 단계끼리도 조금씩 (z-파이팅 방지)
+    // 바깥으로 미는 정도는 잎이 얼마나 누웠는지에 따른다. 눕힌 잎은 옆으로 넓게
+    // 퍼져 겹치므로 더 밀어내고, 곧추선 잎은 그럴 필요가 없다(밀면 화분 밖으로
+    // 떠 버린다). 위로는 따로 안 올린다 — 잎 원점이 곧 잎자루가 붙는 자리라
+    // 세우면 저절로 위로 뻗는다.
+    const reach=0.5*unit+petH*0.5*lean+bs*0.42*Math.abs(Math.sin(tilt));
     bl.position.set(px*reach,(petH+Math.cos(lean)*0.3*unit)*0.98,pz*reach);
     bl.rotation.y=-ang+Math.PI/2; bl.rotation.x=tilt; bl.castShadow=true; g.add(bl);
   }
