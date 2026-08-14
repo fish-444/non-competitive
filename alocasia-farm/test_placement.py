@@ -432,3 +432,82 @@ if __name__ == "__main__":
         t()
         print(f"  ✔ {t.__name__}")
     print(f"\n{len(tests)}개 통과")
+
+
+# ── light-sim 과 같은 물리인가 ────────────────────────────────────────────
+def test_the_pure_python_physics_matches_the_simulator():
+    """placement.py 와 light-sim 이 **같은 답**을 내야 한다.
+
+    같은 식을 두 곳에 적어 뒀다(여긴 순수 파이썬, 저긴 numpy). 조용히 갈라지면
+    앱이 제안하는 배치와 시뮬레이터가 내는 배치가 서로 달라진다. 좌표계도
+    단위도 다르므로(cm/m, y↔z, 반각/전체각) 그 환산까지 여기서 걸린다.
+    """
+    import os, random, sys
+    sim = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "light-sim")
+    if not os.path.isdir(sim):
+        return                                  # 시뮬레이터가 없는 설치본에서는 건너뛴다
+    sys.path.insert(0, sim)
+    try:
+        from geometry import Light, Pot
+        from light import ppfd_at
+    except ImportError:
+        return                                  # numpy 가 없으면 건너뛴다
+
+    rng = random.Random(11)
+    for _ in range(30):
+        lamps = [{"x": rng.uniform(-25, 25), "y": rng.uniform(35, 60),
+                  "z": rng.uniform(-18, 18), "power": 1.0,
+                  "angle": rng.uniform(20, 70)} for _ in range(3)]
+        blockers = [(rng.uniform(-25, 25), rng.uniform(-18, 18), rng.uniform(0, 12),
+                     rng.uniform(0, 40), rng.uniform(0, 4)) for _ in range(5)]
+        px, py, pz = rng.uniform(-25, 25), rng.uniform(5, 32), rng.uniform(-18, 18)
+
+        mine = placement.shaded_illuminance(px, py, pz, blockers, lamps)
+        # cm → m, (x,높이,앞뒤) → (x,앞뒤,높이), 반각 → 전체각
+        L = [Light(position=(l["x"] / 100, l["z"] / 100, l["y"] / 100),
+                   ppf=l["power"], beam_angle=l["angle"] * 2) for l in lamps]
+        B = [(Pot((0, 0), bh / 100, br / 100, blai), (bx / 100, bz / 100))
+             for (bx, bz, br, bh, blai) in blockers]
+        theirs = ppfd_at((px / 100, pz / 100, py / 100), L, B,
+                         placement.EXTINCTION_K) / 10000.0   # 1/d² 가 cm² 라 1e4 배
+        assert abs(mine - theirs) <= 1e-9 * max(mine, theirs, 1e-9), (mine, theirs)
+
+
+def test_a_narrow_beam_concentrates_instead_of_dimming():
+    """같은 등을 좁게 모으면 축 위가 **더 밝아야** 한다.
+
+    예전 모델은 광량을 정규화하지 않아 빔을 좁히면 그냥 어두워졌다 — 각도를
+    바꾸면 등의 세기까지 같이 바뀌는 셈이라, 조명 설정을 만지면 점수가 엉뚱하게
+    움직였다.
+    """
+    wide = [{"x": 0.0, "y": 47.0, "z": 0.0, "power": 1.0, "angle": 60.0}]
+    narrow = [{"x": 0.0, "y": 47.0, "z": 0.0, "power": 1.0, "angle": 20.0}]
+    assert placement.illuminance(0, 0, narrow) > placement.illuminance(0, 0, wide)
+
+
+def test_leaf_count_drives_the_shade_not_just_the_width():
+    """잎이 빽빽할수록 더 가린다 — 몸집이 같아도.
+
+    원-원 겹침으로 재던 예전 모델은 이걸 못 담아, 잎 세 장짜리 어린 포기와
+    열두 장 빽빽한 포기가 똑같은 그늘을 만들었다.
+    """
+    lamps = [{"x": 0.0, "y": 47.0, "z": 20.0, "power": 1.0, "angle": 70.0}]
+    here = (0.0, 15.0, 0.0)                       # 수광점
+    sparse = [(0.0, 10.0, 8.0, 30.0, 0.4)]        # 같은 자리·같은 몸집, LAI 만 다름
+    dense = [(0.0, 10.0, 8.0, 30.0, 3.5)]
+    a = placement.shaded_illuminance(*here, sparse, lamps)
+    b = placement.shaded_illuminance(*here, dense, lamps)
+    assert b < a
+
+
+def test_lai_comes_from_leaf_count_and_size():
+    """LAI = 잎 면적의 합 ÷ 덮는 지면 면적. farm_bridge.py 와 같은 식이어야 한다."""
+    import math as _m
+    got = placement.plant_lai({"leaf_count": 10, "leaf_max_cm": 20.0}, 20.0)
+    mean_leaf = placement.MEAN_OVER_MAX_LEAF * 20.0
+    want = 10 * placement.LEAF_AREA_FACTOR * mean_leaf ** 2 / (_m.pi * 400.0)
+    assert abs(got - want) < 1e-9
+
+
+def test_lai_falls_back_when_leaves_were_not_counted():
+    assert placement.plant_lai({}, 12.0) == 1.2

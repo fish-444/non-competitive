@@ -1724,6 +1724,7 @@ async function patchPlant(fields){
     document.getElementById('mUpd').textContent='⚠️ '+(e.detail||'수정 실패'); return;}
   const p=await r.json();
   objs[p.id].data=p; rebuildObj(p); refreshList(); refreshSlots(); openModal(p);
+  return p;                    // 부른 쪽이 '정말 반영됐나'를 확인할 수 있게
 }
 // 크기 등급
 document.querySelectorAll('#mSizePick button').forEach(b=>
@@ -1731,9 +1732,20 @@ document.querySelectorAll('#mSizePick button').forEach(b=>
 // 흙 마름 — 예정일을 하루 당기거나 미룬다
 document.querySelectorAll('#mSoilPick button').forEach(b=>
   b.addEventListener('click',()=>patchPlant({soil:b.dataset.soil})));
-// 잎 모양 — 빈 값이면 자동(품종 이름으로 판정)으로 되돌린다
+// 잎 모양 — 'auto' 면 품종 이름으로 판정하는 기본 동작으로 되돌린다.
+//
+// 서버가 옛 main.py 를 물고 있으면(파일만 받고 서버를 안 껐다 켠 경우) FastAPI 가
+// 모르는 폼 필드를 **조용히 무시하고 200 을 돌려준다**. 그러면 버튼은 눌리는데
+// 아무 일도 안 일어나서 "구현이 안 됐다"로 보인다. 응답이 실제로 반영됐는지
+// 확인해서, 안 됐으면 무엇을 해야 하는지 알려 준다.
 document.querySelectorAll('#mLeafPick button').forEach(b=>
-  b.addEventListener('click',()=>patchPlant({leaf_type:b.dataset.lt})));
+  b.addEventListener('click',async()=>{
+    const want=b.dataset.lt, p=await patchPlant({leaf_type:want});
+    if(!p)return;
+    const got=p.leaf_type||'auto';
+    if(got!==want) document.getElementById('mUpd').textContent=
+      '⚠️ 서버가 잎 모양을 안 받았어요 — 서버를 껐다 켜 주세요 (main.py 는 시작할 때만 읽힙니다)';
+  }));
 // 잎 −/+ (성엽 −1 · 노엽 +1 로 단계 이동)
 document.querySelectorAll('.cnt button').forEach(b=>b.addEventListener('click',()=>{
   if(!modalId)return;
