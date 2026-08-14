@@ -10,13 +10,17 @@ SA 는 무작위라 "정답" 을 박을 수 없다. 대신 **어겨서는 안 �
 
 import math
 import random
+from dataclasses import replace
 
 import numpy as np
 import pytest
 
 from geometry import Config, Grid, Light, Pot, SAParams, Space
-from optimize import (anneal, anneal_multi, best_of, calibrate_temperature, evaluate,
-                      format_grid, layout_grid, score_of, spread, _free_cells, _swapped)
+from light import compute_ppfd_fast
+from optimize import (SARun, anneal, anneal_multi, at_bounds, best_of,
+                      calibrate_temperature, evaluate, format_grid, layout_grid,
+                      light_notes, light_table, score_of, spread,
+                      _free_cells, _movable, _moved_light, _swapped)
 
 
 def _cfg(pots, rows=3, cols=4, lights=None):
@@ -247,3 +251,187 @@ def test_the_printed_grid_lines_up():
     rows = text.splitlines()
     assert len(rows) == 3                                  # 머리글 + 두 줄
     assert len({len(r) for r in rows}) == 1                # 폭이 다 같다
+
+
+# ── 조명 이동 ─────────────────────────────────────────────────────────────
+def _rail_cfg(pots=None, z=(0.5, 1.0), y=(0.1, 0.9), **sa):
+    """레일 조명 2개 — x 는 고정, y/z 만 움직인다.
+
+    시작 위치는 범위 한가운데에 둔다. 밖에서 시작하면 안 옮겨진 축이 범위 밖에
+    남아 있어 '범위를 지키는가' 를 물을 수 없다 (load_config 는 그런 설정을 거절한다).
+    """
+    from geometry import MoveBounds
+    mid = ((y[0] + y[1]) / 2, (z[0] + z[1]) / 2)
+    lights = [Light(position=(0.4, mid[0], mid[1]), ppf=500, beam_angle=90,
+                    move=MoveBounds(y=y, z=z)),
+              Light(position=(1.6, mid[0], mid[1]), ppf=500, beam_angle=90,
+                    move=MoveBounds(y=y, z=z))]
+    p = SAParams(iterations=400, seeds=2, move_lights=True, **sa)
+    return replace(_cfg(pots or _mixed(), lights=lights), sa=p)
+
+
+def test_only_the_axes_with_bounds_can_move():
+    """레일에 달린 등은 좌우로 못 간다 — 안 적은 축은 고정이어야 한다."""
+    cfg = _rail_cfg()
+    knobs = _movable(cfg.lights)
+    assert {ax for _, ax in knobs} == {1, 2}          # y, z 만
+    assert len(knobs) == 4                            # 광원 2개 x 축 2개
+
+
+def test_a_light_with_no_move_block_is_immovable():
+    assert _movable([Light(position=(1, 1, 1), ppf=100, beam_angle=90)]) == []
+
+
+def test_a_moved_light_stays_inside_its_bounds():
+    """범위 밖으로 나가면 최적화가 실제로 못 하는 답을 낸다."""
+    cfg = _rail_cfg(z=(0.60, 0.65))
+    knobs = _movable(cfg.lights)
+    rng = random.Random(0)
+    lights = list(cfg.lights)
+    for _ in range(400):
+        cand = _moved_light(lights, knobs, step=0.5, rng=rng)   # 일부러 큰 걸음
+        if cand is None:
+            continue
+        lights = cand
+        for L in lights:
+            assert 0.60 - 1e-9 <= L.position[2] <= 0.65 + 1e-9
+            assert 0.1 - 1e-9 <= L.position[1] <= 0.9 + 1e-9
+            assert L.position[0] in (0.4, 1.6)        # x 는 그대로
+
+
+def test_moving_a_light_leaves_the_others_alone():
+    cfg = _rail_cfg()
+    moved = _moved_light(cfg.lights, _movable(cfg.lights), 0.1, random.Random(3))
+    changed = [i for i, (a, b) in enumerate(zip(cfg.lights, moved))
+               if a.position != b.position]
+    assert len(changed) == 1
+
+
+def test_a_light_pinned_at_its_bound_reports_no_move():
+    """이미 경계면 걸음이 잘려 제자리다 — 바뀐 게 없으면 None."""
+    from geometry import MoveBounds
+    pinned = [Light(position=(1.0, 0.5, 1.0), ppf=500, beam_angle=90,
+                    move=MoveBounds(z=(1.0, 1.0)))]
+    assert _moved_light(pinned, _movable(pinned), 0.1, random.Random(0)) is None
+
+
+def test_nothing_movable_means_no_candidate():
+    assert _moved_light([], [], 0.1, random.Random(0)) is None
+
+
+# ── 조명까지 같이 도는 SA ─────────────────────────────────────────────────
+def test_lights_stay_put_when_light_moving_is_off():
+    """예전 설정이 조용히 달라지면 안 된다 — 기본은 화분만 옮긴다."""
+    cfg = _cfg(_mixed())
+    run = anneal(cfg, seed=0, params=SAParams(iterations=200))
+    assert [L.position for L in run.lights] == [L.position for L in cfg.lights]
+    assert run.light_moves == 0
+
+
+def test_lights_actually_move_when_it_is_on():
+    run = anneal(_rail_cfg(), seed=0)
+    assert run.light_moves > 0
+    assert [L.position for L in run.lights] != [L.position for L in _rail_cfg().lights]
+
+
+def test_moving_lights_keeps_every_pot_intact():
+    """조명을 흔드는 동안 화분이 사라지거나 겹치면 안 된다."""
+    cfg = _rail_cfg()
+    run = anneal(cfg, seed=1)
+    key = lambda p: (p.plant_height, p.canopy_radius, p.leaf_area_index)
+    assert sorted(map(key, run.pots)) == sorted(map(key, cfg.pots))
+    assert len({p.grid_position for p in run.pots}) == len(run.pots)
+
+
+def test_moving_lights_never_ends_up_worse_than_the_start():
+    cfg = _rail_cfg()
+    for seed in range(3):
+        run = anneal(cfg, seed=seed)
+        assert run.score <= run.initial_score + 1e-12
+
+
+def test_joint_optimisation_is_deterministic():
+    cfg = _rail_cfg()
+    a, b = anneal(cfg, seed=4), anneal(cfg, seed=4)
+    assert a.score == b.score
+    assert [L.position for L in a.lights] == [L.position for L in b.lights]
+
+
+def test_moving_lights_reaches_places_pot_swaps_cannot():
+    """빔이 안 닿아 0 을 받는 자리는 화분을 아무리 섞어도 안 고쳐진다.
+
+    이게 조명까지 변수로 넣은 이유다 — 커버리지 구멍은 배치 문제가 아니다.
+    """
+    from geometry import MoveBounds
+    pots = [Pot((0, c), 0.2, 0.10, 1.0) for c in range(4)]
+    narrow = [Light(position=(0.3, 0.75, 0.8), ppf=800, beam_angle=24,
+                    move=MoveBounds(x=(0.2, 1.8), z=(0.6, 1.9)))]
+    cfg = replace(_cfg(pots, lights=narrow),
+                  sa=SAParams(iterations=1500, move_lights=True))
+    before = compute_ppfd_fast(cfg)
+    assert np.nanmin(before) == 0.0                       # 빔 밖이라 굶는 자리가 있다
+
+    run = anneal(cfg, seed=0)
+    after = compute_ppfd_fast(replace(cfg, pots=run.pots, lights=run.lights))
+    assert np.nanmin(after) > 0.0                         # 조명을 옮겨 다 덮었다
+
+
+# ── 경계 진단 ─────────────────────────────────────────────────────────────
+def _at_ceiling(cfg, z_hi):
+    """조명이 천장에 붙은 결과를 흉내낸 SARun."""
+    from geometry import MoveBounds
+    top = [replace(L, position=(L.position[0], L.position[1], z_hi))
+           for L in cfg.lights]
+    return SARun(seed=0, pots=list(cfg.pots), lights=top, score=0.1, cv=0.1,
+                 mean_ppfd=100.0, history=np.array([0.2, 0.1]), initial_score=0.2,
+                 initial_temp=0.01, accepted=1, uphill=0, light_moves=1)
+
+
+def test_a_light_pushed_to_the_ceiling_is_detected():
+    cfg = _rail_cfg(z=(0.5, 1.0))
+    hits = at_bounds(cfg, _at_ceiling(cfg, 1.0))
+    assert all(ax == "z" and end == "최대" for _, ax, end in hits)
+    assert len(hits) == 2
+
+
+def test_almost_at_the_bound_still_counts():
+    """SA 는 경계에 딱 안 떨어진다. 절대값으로 재면 경고가 영영 안 뜬다."""
+    cfg = _rail_cfg(z=(0.5, 1.0))
+    near = at_bounds(cfg, _at_ceiling(cfg, 0.988))     # 범위의 2.4% 아래
+    assert [(i, ax, end) for i, ax, end in near if ax == "z"]
+
+
+def test_a_light_resting_in_the_middle_is_not_flagged():
+    cfg = _rail_cfg(z=(0.5, 1.0))
+    assert [h for h in at_bounds(cfg, _at_ceiling(cfg, 0.75)) if h[1] == "z"] == []
+
+
+def test_the_degenerate_ceiling_answer_is_called_out():
+    """균일도만 보면 '조명을 무한히 올려라' 가 정답이 된다 — 말해 줘야 한다."""
+    cfg = _rail_cfg(z=(0.5, 1.0))
+    notes = " ".join(light_notes(cfg, _at_ceiling(cfg, 1.0),
+                                 SAParams(move_lights=True, w_mean=0.0)))
+    assert "꼭대기" in notes and "w_mean" in notes
+
+
+def test_weighting_the_mean_softens_the_ceiling_warning():
+    """총 광량을 이미 보고 있으면 천장에 붙어도 퇴화가 아니다."""
+    cfg = _rail_cfg(z=(0.5, 1.0))
+    notes = " ".join(light_notes(cfg, _at_ceiling(cfg, 1.0),
+                                 SAParams(move_lights=True, w_mean=120.0)))
+    assert "농사로는 틀린 답" not in notes
+
+
+def test_lights_that_never_moved_are_reported():
+    cfg = _rail_cfg()
+    still = SARun(seed=0, pots=list(cfg.pots), lights=list(cfg.lights), score=.1,
+                  cv=.1, mean_ppfd=100.0, history=np.array([.1]), initial_score=.1,
+                  initial_temp=.01, accepted=0, uphill=0, light_moves=0)
+    assert "하나도 안 받아들여" in " ".join(light_notes(cfg, still, cfg.sa))
+
+
+def test_the_light_table_shows_only_what_changed():
+    cfg = _rail_cfg(z=(0.5, 1.0))
+    text = light_table(cfg, _at_ceiling(cfg, 1.0))
+    assert "0.750 -> 1.000" in text          # z 는 바뀌었고 (범위 [0.5,1.0] 의 가운데에서 출발)
+    assert "0.400" in text and "0.400 ->" not in text     # x 는 그대로

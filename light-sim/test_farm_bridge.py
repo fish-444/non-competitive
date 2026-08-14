@@ -329,3 +329,85 @@ def test_an_override_row_without_a_key_is_rejected(tmp_path):
 
 def test_no_override_file_means_no_overrides():
     assert fb.load_overrides(None) == {}
+
+
+# ── 조명 이동 범위 (설정 읽기) ────────────────────────────────────────────
+def _cfg_text(move_block="", optimize_block=""):
+    return f"""
+label: t
+space: {{width: 2.0, depth: 1.0, height: 2.0}}
+grid: {{rows: 1, cols: 2, row_spacing: 0.3, col_spacing: 0.3}}
+lights:
+  - position: [1.0, 0.5, 1.0]
+    ppf: 400
+    beam_angle: 90
+{move_block}
+pots:
+  - {{grid_position: [0, 0], plant_height: 0.3, canopy_radius: 0.1, leaf_area_index: 1.0}}
+{optimize_block}
+"""
+
+
+def _load(tmp_path, text):
+    from geometry import load_config
+    p = tmp_path / "c.yaml"
+    p.write_text(text, encoding="utf-8")
+    return load_config(str(p))
+
+
+def test_a_light_without_a_move_block_is_fixed(tmp_path):
+    """설정에 안 적었다는 건 못 옮긴다는 뜻으로 읽는다 — 안전한 쪽 기본값."""
+    cfg = _load(tmp_path, _cfg_text())
+    assert cfg.lights[0].move is None
+
+
+def test_only_the_listed_axes_become_free(tmp_path):
+    cfg = _load(tmp_path, _cfg_text("    move:\n      z: [0.8, 1.5]\n"))
+    mv = cfg.lights[0].move
+    assert mv.free_axes == (2,)
+    assert mv.bounds(2) == (0.8, 1.5) and mv.bounds(0) is None
+
+
+def test_a_position_outside_its_own_bounds_is_rejected(tmp_path):
+    """시작하자마자 등을 튕겨 옮겨 놓고 '이게 최적' 이라 말하는 걸 막는다."""
+    with pytest.raises(ValueError, match="범위 .* 밖입니다"):
+        _load(tmp_path, _cfg_text("    move:\n      z: [1.2, 1.5]\n"))
+
+
+def test_a_backwards_range_is_rejected(tmp_path):
+    with pytest.raises(ValueError, match=r"\[최소, 최대\]"):
+        _load(tmp_path, _cfg_text("    move:\n      z: [1.5, 0.8]\n"))
+
+
+def test_turning_on_light_moving_without_any_bounds_is_rejected(tmp_path):
+    """조용히 아무것도 안 하는 것보다 왜 안 되는지 말해 주는 편이 낫다."""
+    with pytest.raises(ValueError, match="움직일 수 있는 광원이 없습니다"):
+        _load(tmp_path, _cfg_text(optimize_block="optimize:\n  move_lights: true\n"))
+
+
+def test_light_moving_is_off_by_default(tmp_path):
+    assert _load(tmp_path, _cfg_text()).sa.move_lights is False
+
+
+def test_the_bridge_writes_rail_bounds_that_load_back(tmp_path):
+    """farm_bridge 가 쓴 move 블록이 그대로 읽혀야 한다 — x 고정, y/z 자유."""
+    built = _built(6, leaf_max_cm=10.0)
+    path = tmp_path / "s.yaml"
+    path.write_text(fb.to_yaml(built, "선반", 200.0, 60.0, 30.0, 16.0, 0.7),
+                    encoding="utf-8")
+    cfg = _load(tmp_path, path.read_text(encoding="utf-8"))
+    for L in cfg.lights:
+        assert L.move is not None
+        assert L.move.free_axes == (1, 2)          # 레일을 따라(y)와 높이(z)만
+        assert L.move.bounds(0) is None            # 좌우는 레일에 고정
+
+
+def test_the_bridge_leaves_room_above_the_tallest_plant(tmp_path):
+    """조명 높이 하한이 제일 큰 포기보다 낮으면 시작부터 빛이 0 인 자리가 생긴다."""
+    built = _built(4, leaf_max_cm=18.0)            # 키 = 39.6 cm
+    path = tmp_path / "s.yaml"
+    path.write_text(fb.to_yaml(built, "t", 200.0, 60.0, 30.0, 16.0, 0.7),
+                    encoding="utf-8")
+    cfg = _load(tmp_path, path.read_text(encoding="utf-8"))
+    tallest = max(p.plant_height for p in cfg.pots)
+    assert cfg.lights[0].move.bounds(2)[0] > tallest

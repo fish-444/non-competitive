@@ -292,6 +292,7 @@ def to_yaml(built: dict, label: str, ppf_each: float, light_height_cm: float,
     """설정 YAML 문자열. pyyaml 로 덤프하지 않고 직접 쓴다 — 주석을 남기려고."""
     rows, cols = built["rows"], built["cols"]
     lights = shelf_lights(ppf_each, light_height_cm, half_angle_deg)
+    max_height_cm = max(p["height_cm"] for p in built["placed"])
     lines = [
         "# 알로카시아팜 백업에서 자동으로 만든 설정입니다.",
         "# 앱에서 잰 값이 바뀌면 farm_bridge.py 를 다시 돌리세요 (손으로 고치면 덮입니다).",
@@ -320,10 +321,18 @@ def to_yaml(built: dict, label: str, ppf_each: float, light_height_cm: float,
         "# 절대 PPFD 는 못 믿지만, 균일도(CV)와 배치 최적화는 그대로 유효합니다.",
         "lights:",
     ]
+    # move 범위는 실제 하드웨어가 정한다. 레일에 달려 있어 좌우(x)로는 못 가고
+    # 레일을 따라(y)서만 움직인다 — placement.py 가 말하는 그대로다.
+    rail_lo, rail_hi = 0.03, SHELF_D_CM / 100 - 0.03
+    z_lo = max(0.20, (max_height_cm + 8) / 100)         # 제일 큰 포기 위로 여유를 둔다
+    z_hi = round(z_lo + 0.45, 3)
     for L in lights:
         lines += [f"  - position: [{L['position'][0]}, {L['position'][1]}, {L['position'][2]}]",
                   f"    ppf: {L['ppf']:g}",
-                  f"    beam_angle: {L['beam_angle']:g}"]
+                  f"    beam_angle: {L['beam_angle']:g}",
+                  "    move:                     # x 는 안 적었으니 고정 (레일)",
+                  f"      y: [{rail_lo:g}, {rail_hi:.2f}]        # 레일을 따라",
+                  f"      z: [{z_lo:.2f}, {z_hi:g}]        # 높이. 실제 조절 범위로 고치세요"]
 
     lines += ["", "pots:"]
     for p in sorted(built["placed"], key=lambda q: (q["row"], q["col"])):
@@ -335,8 +344,14 @@ def to_yaml(built: dict, label: str, ppf_each: float, light_height_cm: float,
             f"    leaf_area_index: {p['lai']:.2f}",
         ]
 
-    lines += ["", "optimize:", "  w_cv: 1.0", "  w_mean: 0.0", "  initial_temp: 0",
-              "  cooling_rate: 0.9993", "  iterations: 4000", "  seeds: 5", ""]
+    lines += [
+        "", "optimize:", "  w_cv: 1.0", "  w_mean: 0.0", "  initial_temp: 0",
+        "  cooling_rate: 0.9993", "  iterations: 4000", "  seeds: 5",
+        "",
+        "  # 조명도 같이 옮기려면 true. 위 lights 의 move 범위 안에서만 움직입니다.",
+        "  # 균일도만 볼 때(w_mean: 0) 조명은 무조건 높이가 상한까지 올라갑니다 —",
+        "  # 멀수록 고르게 퍼지니까요. 총 광량도 같이 보려면 w_mean 을 올리세요.",
+        "  move_lights: false", ""]
     return "\n".join(lines)
 
 

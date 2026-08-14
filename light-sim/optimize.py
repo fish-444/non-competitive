@@ -14,12 +14,12 @@ from __future__ import annotations
 
 import math
 import random
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from typing import List, Optional, Sequence, Tuple
 
 import numpy as np
 
-from geometry import Config, Pot, SAParams
+from geometry import Config, Light, Pot, SAParams
 from light import compute_ppfd_fast, uniformity_cv
 
 # 점수 차가 이보다 작으면 '같은 배치' 로 본다.
@@ -43,6 +43,8 @@ class SARun:
     initial_temp: float
     accepted: int                   # 받아들인 이동 횟수
     uphill: int                     # 그중 더 나쁜데도 받아들인 횟수
+    lights: List[Light] = field(default_factory=list)   # 찾은 조명 위치
+    light_moves: int = 0            # 받아들인 이동 중 광원을 옮긴 것
 
     @property
     def best_curve(self) -> np.ndarray:
@@ -71,10 +73,13 @@ def score_of(ppfd: np.ndarray, w_cv: float, w_mean: float) -> Tuple[float, float
     return w_cv * cv + w_mean / mean, cv, mean
 
 
-def evaluate(cfg: Config, pots: Sequence[Pot], p: SAParams):
-    """배치 하나를 매긴다. cfg 는 그대로 두고 화분만 갈아 끼운다."""
-    ppfd = compute_ppfd_fast(replace(cfg, pots=list(pots)))
-    return score_of(ppfd, p.w_cv, p.w_mean)
+def evaluate(cfg: Config, pots: Sequence[Pot], p: SAParams,
+             lights: Optional[Sequence[Light]] = None):
+    """배치 하나를 매긴다. cfg 는 그대로 두고 화분(과 조명)만 갈아 끼운다."""
+    swap = {"pots": list(pots)}
+    if lights is not None:
+        swap["lights"] = list(lights)
+    return score_of(compute_ppfd_fast(replace(cfg, **swap)), p.w_cv, p.w_mean)
 
 
 # --------------------------------------------------------------------------- 이웃해
@@ -108,6 +113,37 @@ def _free_cells(cfg: Config) -> List[Tuple[int, int]]:
     return [(r, c) for r in range(cfg.grid.rows) for c in range(cfg.grid.cols)]
 
 
+def _movable(lights: Sequence[Light]) -> List[Tuple[int, int]]:
+    """(광원 번호, 움직일 수 있는 축) 쌍 목록. 이게 비면 조명은 못 옮긴다."""
+    return [(i, ax) for i, L in enumerate(lights)
+            if L.move for ax in L.move.free_axes]
+
+
+def _moved_light(lights: Sequence[Light], knobs: Sequence[Tuple[int, int]],
+                 step: float, rng: random.Random) -> Optional[List[Light]]:
+    """광원 하나를 한 축으로 조금 옮긴 배치. 범위 밖은 잘라 낸다.
+
+    화분은 칸이 정해져 있어 '맞바꾸기' 로 끝나지만 조명은 연속이라 걸음 폭이
+    필요하다. 폭은 밖에서 온도에 맞춰 줄여 준다 — 뜨거울 땐 성큼성큼 훑고
+    식으면 잘게 다듬는다. 폭을 고정하면 끝까지 큰 걸음이라 미세 조정이 안 된다.
+
+    범위 밖으로 나가면 되돌리지 않고 **자른다**. 되돌리면 경계에 답이 있을 때
+    (대개 '조명을 최대한 올려라' 가 그렇다) 영영 못 닿는다.
+    """
+    if not knobs:
+        return None
+    i, axis = knobs[rng.randrange(len(knobs))]
+    lo, hi = lights[i].move.bounds(axis)
+    pos = list(lights[i].position)
+    moved = min(hi, max(lo, pos[axis] + rng.gauss(0.0, step)))
+    if abs(moved - pos[axis]) < 1e-12:
+        return None                              # 이미 경계에 붙어 있다
+    pos[axis] = moved
+    out = list(lights)
+    out[i] = replace(out[i], position=(pos[0], pos[1], pos[2]))
+    return out
+
+
 # --------------------------------------------------------------------------- 온도 보정
 def calibrate_temperature(cfg: Config, p: SAParams, rng: random.Random,
                           samples: int = 60) -> float:
@@ -120,14 +156,17 @@ def calibrate_temperature(cfg: Config, p: SAParams, rng: random.Random,
     exp(-Δ/T₀) = 0.5  →  T₀ = 평균Δ / ln2.
     """
     cells = _free_cells(cfg)
+    knobs = _movable(cfg.lights) if p.move_lights else []
     base, _, _ = evaluate(cfg, cfg.pots, p)
     deltas = []
     for _ in range(samples):
-        cand = _swapped(cfg.pots, cells, rng)
-        if cand is None:
-            continue
-        s, _, _ = evaluate(cfg, cand, p)
-        if math.isfinite(s) and s > base:
+        if knobs and rng.random() < p.light_move_prob:
+            lit = _moved_light(cfg.lights, knobs, p.light_step, rng)
+            s = evaluate(cfg, cfg.pots, p, lit)[0] if lit else None
+        else:
+            cand = _swapped(cfg.pots, cells, rng)
+            s = evaluate(cfg, cand, p)[0] if cand else None
+        if s is not None and math.isfinite(s) and s > base:
             deltas.append(s - base)
     if not deltas:
         return 1e-6                              # 바뀌는 게 없다 — 온도가 의미 없다
@@ -145,41 +184,58 @@ def anneal(cfg: Config, seed: int = 0, params: Optional[SAParams] = None) -> SAR
     p = params or cfg.sa
     rng = random.Random(seed)
     cells = _free_cells(cfg)
+    knobs = _movable(cfg.lights) if p.move_lights else []
 
     temp = p.initial_temp
     if temp <= 0:
         temp = calibrate_temperature(cfg, p, random.Random(seed + 10_000))
     temp0 = temp
 
-    cur_pots = list(cfg.pots)
-    cur, cur_cv, cur_mean = evaluate(cfg, cur_pots, p)
-    best_pots, best, best_cv, best_mean = list(cur_pots), cur, cur_cv, cur_mean
+    cur_pots, cur_lights = list(cfg.pots), list(cfg.lights)
+    cur, cur_cv, cur_mean = evaluate(cfg, cur_pots, p, cur_lights)
+    best_pots, best_lights = list(cur_pots), list(cur_lights)
+    best, best_cv, best_mean = cur, cur_cv, cur_mean
 
     history = np.empty(p.iterations + 1, dtype=float)
     history[0] = cur
-    accepted = uphill = 0
+    accepted = uphill = light_moves = 0
 
     for i in range(p.iterations):
-        cand = _swapped(cur_pots, cells, rng)
-        if cand is not None:
-            s, cv, mean = evaluate(cfg, cand, p)
+        # 걸음 폭을 온도와 같이 줄인다 — 뜨거울 땐 성큼성큼, 식으면 잘게 다듬는다.
+        # 밑을 깔아 두는 건 끝에서 폭이 0 이 되어 아무것도 안 움직이는 걸 막으려고.
+        step = p.light_step * max(0.05, temp / temp0 if temp0 > 0 else 1.0)
+        move_light = bool(knobs) and rng.random() < p.light_move_prob
+        if move_light:
+            cand_lights = _moved_light(cur_lights, knobs, step, rng)
+            cand_pots = cur_pots if cand_lights is not None else None
+        else:
+            cand_pots = _swapped(cur_pots, cells, rng)
+            cand_lights = cur_lights
+
+        if cand_pots is not None and cand_lights is not None:
+            s, cv, mean = evaluate(cfg, cand_pots, p, cand_lights)
             delta = s - cur
             worse = delta > _TIE
             # T 가 0 에 가까워지면 exp 가 언더플로한다 — 나빠지는 건 그냥 거절
             take = (not worse) or (temp > _TIE and rng.random() < math.exp(-delta / temp))
             if take:
-                cur_pots, cur, cur_cv, cur_mean = cand, s, cv, mean
+                cur_pots, cur_lights = cand_pots, cand_lights
+                cur, cur_cv, cur_mean = s, cv, mean
                 accepted += 1
+                if move_light:
+                    light_moves += 1
                 if worse:
                     uphill += 1
                 if cur < best:
-                    best_pots, best, best_cv, best_mean = list(cur_pots), cur, cur_cv, cur_mean
+                    best_pots, best_lights = list(cur_pots), list(cur_lights)
+                    best, best_cv, best_mean = cur, cur_cv, cur_mean
         temp *= p.cooling_rate
         history[i + 1] = cur
 
-    return SARun(seed=seed, pots=best_pots, score=best, cv=best_cv, mean_ppfd=best_mean,
-                 history=history, initial_score=history[0], initial_temp=temp0,
-                 accepted=accepted, uphill=uphill)
+    return SARun(seed=seed, pots=best_pots, lights=best_lights, score=best,
+                 cv=best_cv, mean_ppfd=best_mean, history=history,
+                 initial_score=history[0], initial_temp=temp0, accepted=accepted,
+                 uphill=uphill, light_moves=light_moves)
 
 
 def anneal_multi(cfg: Config, params: Optional[SAParams] = None,
@@ -216,6 +272,80 @@ def spread(runs: Sequence[SARun]) -> dict:
 
 def best_of(runs: Sequence[SARun]) -> SARun:
     return min(runs, key=lambda r: r.score)
+
+
+# --------------------------------------------------------------------------- 경계 진단
+def at_bounds(cfg: Config, run: SARun, rel_tol: float = 0.05) -> List[Tuple[int, str, str]]:
+    """최적해에서 범위 끝에 붙어 버린 (광원 번호, 축, '최소'/'최대') 목록.
+
+    문턱을 **범위의 비율**로 잡는다. SA 는 무작위 걸음이라 경계에 딱 떨어지는
+    일이 드물다 — 0.926 까지 갈 수 있는데 0.914 에서 멈췄다면 그건 "여기가
+    최적" 이 아니라 "끝까지 밀고 싶은데 못 간 것" 이다. 절대값 1mm 로 재면
+    이걸 다 놓치고 경고가 영영 안 뜬다.
+    """
+    out = []
+    for i, (before, after) in enumerate(zip(cfg.lights, run.lights)):
+        if not before.move:
+            continue
+        for axis, name in enumerate("xyz"):
+            span = before.move.bounds(axis)
+            if span is None:
+                continue
+            lo, hi = span
+            tol = max((hi - lo) * rel_tol, 1e-6)
+            v = after.position[axis]
+            if v <= lo + tol:
+                out.append((i, name, "최소"))
+            elif v >= hi - tol:
+                out.append((i, name, "최대"))
+    return out
+
+
+def light_notes(cfg: Config, run: SARun, p: SAParams) -> List[str]:
+    """조명 최적화 결과를 읽을 때 알아야 할 것들.
+
+    가장 중요한 경고가 여기 있다: **균일도만 보면 조명을 무조건 높이는 게 정답이
+    된다.** 멀어질수록 빛은 고르게 퍼지니까 — 극단적으로는 무한히 올리면 모두가
+    똑같이 어두워져 CV 가 0 이 된다. 수학적으로 맞고 농사로는 틀린 답이다.
+    그래서 높이가 상한에 붙으면 그 사실을 반드시 말해 줘야 한다.
+    """
+    notes = []
+    stuck = at_bounds(cfg, run)
+    high = [i for i, ax, end in stuck if ax == "z" and end == "최대"]
+
+    if high and p.w_mean == 0:
+        notes.append(
+            f"조명 {len(high)}개가 허용 높이의 **꼭대기**에 붙었습니다. 균일도만 보면 "
+            "당연한 결과입니다 — 멀수록 빛이 고르게 퍼지고, 끝까지 밀면 모두가 똑같이 "
+            "어두워져 CV 가 0 이 됩니다.\n"
+            "     수학은 맞지만 농사로는 틀린 답입니다. w_mean 을 올려 총 광량을 "
+            "같이 보거나, move.z 의 상한을 실제로 올릴 수 있는 높이로 낮추세요.")
+    elif high:
+        notes.append(f"조명 {len(high)}개가 허용 높이의 꼭대기에 붙었습니다. "
+                     "더 올릴 수 있다면 move.z 상한을 늘려 다시 돌려 보세요.")
+
+    other = [(i, ax, end) for i, ax, end in stuck if not (ax == "z" and end == "최대")]
+    if other:
+        where = ", ".join(f"조명{i}의 {ax}({end})" for i, ax, end in other[:5])
+        notes.append(f"범위 끝에 닿은 곳: {where}. 실제로 더 움직일 수 있다면 "
+                     "범위를 넓혀 다시 돌려 볼 만합니다.")
+
+    if p.move_lights and run.light_moves == 0:
+        notes.append("조명을 옮긴 이동이 하나도 안 받아들여졌습니다 — 지금 위치가 "
+                     "이미 좋거나, move 범위가 너무 좁습니다.")
+    return notes
+
+
+def light_table(cfg: Config, run: SARun) -> str:
+    """조명이 어디서 어디로 갔는지. 안 움직인 축은 조용히 둔다."""
+    lines = ["  조명    x(m)              y(m)              z(m)"]
+    for i, (before, after) in enumerate(zip(cfg.lights, run.lights)):
+        cells = []
+        for axis in range(3):
+            a, b = before.position[axis], after.position[axis]
+            cells.append(f"{a:.3f}" if abs(b - a) < 1e-4 else f"{a:.3f} -> {b:.3f}")
+        lines.append(f"   {i:>2}    " + "  ".join(f"{c:<16}" for c in cells))
+    return "\n".join(lines)
 
 
 # --------------------------------------------------------------------------- 보기 좋게

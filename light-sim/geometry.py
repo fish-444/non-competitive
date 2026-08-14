@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 import yaml
 
@@ -28,15 +28,39 @@ class Space:
 
 
 @dataclass
+class MoveBounds:
+    """광원이 실제로 움직일 수 있는 범위(m). 축마다 (최소, 최대), None 이면 고정.
+
+    최적화가 물리적으로 불가능한 답을 내지 않게 하는 장치다. 레일에 달린 등은
+    좌우(x)로 못 가고 레일을 따라서만 움직인다 — 그걸 안 적으면 최적화는
+    "등을 공중 한가운데로 옮기세요" 같은 답을 낸다.
+    """
+    x: Optional[Tuple[float, float]] = None
+    y: Optional[Tuple[float, float]] = None
+    z: Optional[Tuple[float, float]] = None
+
+    @property
+    def free_axes(self) -> Tuple[int, ...]:
+        return tuple(i for i, b in enumerate((self.x, self.y, self.z)) if b is not None)
+
+    def bounds(self, axis: int) -> Optional[Tuple[float, float]]:
+        return (self.x, self.y, self.z)[axis]
+
+
+@dataclass
 class Light:
     """광원 하나. 아래를 향한 램버시안 배광으로 본다.
 
     ppf 는 광원이 내보내는 총 광량자속(µmol/s)이고, beam_angle 은 빛이 퍼지는
     전체 각(도)이다. 반각이 beam_angle/2.
+
+    move 는 이 등이 움직일 수 있는 범위다. 없으면 고정으로 본다 — 설정에 안
+    적었다는 건 못 옮긴다는 뜻이라고 읽는 편이 안전하다.
     """
     position: Tuple[float, float, float]
     ppf: float
     beam_angle: float
+    move: Optional[MoveBounds] = None
 
     @property
     def half_angle_rad(self) -> float:
@@ -101,6 +125,11 @@ class SAParams:
     w_cv: float = 1.0
     w_mean: float = 0.0
 
+    # 조명도 같이 옮길지. 켜려면 각 광원에 move 범위를 적어야 한다.
+    move_lights: bool = False
+    light_step: float = 0.08              # 광원을 한 번에 옮기는 폭(m). 온도와 같이 줄어든다
+    light_move_prob: float = 0.5          # 이웃해를 고를 때 '광원 이동' 을 뽑을 확률
+
 
 @dataclass
 class Config:
@@ -131,6 +160,35 @@ def receiver_point(pot: Pot, grid: Grid, space: Space) -> Tuple[float, float, fl
 
 
 # --------------------------------------------------------------------------- 설정 파일
+_AXES = ("x", "y", "z")
+
+
+def _move_bounds(raw, i: int, pos) -> Optional[MoveBounds]:
+    """lights[i].move → MoveBounds. 적힌 축만 움직이고 나머지는 고정이다.
+
+    지금 위치가 범위 밖이면 바로 세운다 — 최적화가 시작하자마자 등을 튕겨
+    옮겨 놓고는 '이게 최적' 이라 말하는 걸 막는다.
+    """
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise ValueError(f"lights[{i}].move 는 x/y/z 를 담은 항목이어야 합니다.")
+    got = {}
+    for axis, name in enumerate(_AXES):
+        span = raw.get(name)
+        if span is None:
+            continue
+        if len(span) != 2 or float(span[0]) > float(span[1]):
+            raise ValueError(f"lights[{i}].move.{name} 은 [최소, 최대] 여야 합니다.")
+        lo, hi = float(span[0]), float(span[1])
+        if not (lo - 1e-9 <= float(pos[axis]) <= hi + 1e-9):
+            raise ValueError(
+                f"lights[{i}] 의 지금 {name} 위치 {float(pos[axis]):g} 가 "
+                f"move.{name} 범위 [{lo:g}, {hi:g}] 밖입니다.")
+        got[name] = (lo, hi)
+    return MoveBounds(**got) if got else None
+
+
 def load_config(path: str) -> Config:
     """YAML → Config. 없는 값은 기본값으로 두되, 격자를 벗어난 화분은 거부한다."""
     with open(path, encoding="utf-8") as f:
@@ -150,7 +208,8 @@ def load_config(path: str) -> Config:
         if len(pos) != 3:
             raise ValueError(f"lights[{i}].position 은 [x, y, z] 세 값이어야 합니다.")
         lights.append(Light(position=(float(pos[0]), float(pos[1]), float(pos[2])),
-                            ppf=float(L["ppf"]), beam_angle=float(L["beam_angle"])))
+                            ppf=float(L["ppf"]), beam_angle=float(L["beam_angle"]),
+                            move=_move_bounds(L.get("move"), i, pos)))
 
     pots = []
     for i, P in enumerate(raw.get("pots") or []):
@@ -178,7 +237,15 @@ def load_config(path: str) -> Config:
                   iterations=int(o.get("iterations", d.iterations)),
                   seeds=int(o.get("seeds", d.seeds)),
                   w_cv=float(o.get("w_cv", d.w_cv)),
-                  w_mean=float(o.get("w_mean", d.w_mean)))
+                  w_mean=float(o.get("w_mean", d.w_mean)),
+                  move_lights=bool(o.get("move_lights", d.move_lights)),
+                  light_step=float(o.get("light_step", d.light_step)),
+                  light_move_prob=float(o.get("light_move_prob", d.light_move_prob)))
+    if sa.move_lights and not any(L.move for L in lights):
+        raise ValueError(
+            "optimize.move_lights 를 켰는데 움직일 수 있는 광원이 없습니다. "
+            "각 lights 항목에 move: {z: [최소, 최대], ...} 를 적어 주세요 — "
+            "무엇이 실제로 조절되는지는 설정에 적힌 대로만 압니다.")
     if not 0.0 < sa.cooling_rate < 1.0:
         raise ValueError("optimize.cooling_rate 는 0 과 1 사이여야 합니다 "
                          f"(받은 값 {sa.cooling_rate}). 1 이면 식지 않습니다.")

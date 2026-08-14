@@ -51,7 +51,8 @@ def run_optimize(cfg, res, out_dir: str, seeds=None, iterations=None):
     if iterations is not None:
         p = replace(p, iterations=iterations)
 
-    print(f"\n[최적화] 모의 담금질 — 시드 {p.seeds}개 x {p.iterations} iteration")
+    what = "화분 + 조명" if p.move_lights else "화분"
+    print(f"\n[최적화] 모의 담금질 — {what}, 시드 {p.seeds}개 x {p.iterations} iteration")
     print(f"  목적함수  {p.w_cv:g} x CV + {p.w_mean:g} x (1/평균PPFD)   (작을수록 좋음)")
 
     runs = optimize.anneal_multi(cfg, p)
@@ -60,11 +61,13 @@ def run_optimize(cfg, res, out_dir: str, seeds=None, iterations=None):
 
     print(f"  초기 온도 {best.initial_temp:.5g}"
           f"{' (자동 보정)' if p.initial_temp <= 0 else ''}, 냉각률 {p.cooling_rate:g}")
-    print("\n  시드      CV     평균PPFD       점수    받아들임(언덕넘기)")
+    extra = "  그중 조명" if p.move_lights else ""
+    print(f"\n  시드      CV     평균PPFD       점수    받아들임(언덕넘기){extra}")
     for r in runs:
         mark = " <- 채택" if r is best else ""
+        lm = f"  {r.light_moves:5d}" if p.move_lights else ""
         print(f"   {r.seed:>2}   {r.cv:.4f}   {r.mean_ppfd:7.1f}   {r.score:9.5f}"
-              f"   {r.accepted:5d} ({r.uphill}){mark}")
+              f"   {r.accepted:5d} ({r.uphill}){lm}{mark}")
     print(f"\n  CV  평균 {sp['cv_mean']:.4f}  표준편차 {sp['cv_std']:.4f}  "
           f"최소 {sp['cv_min']:.4f}  최대 {sp['cv_max']:.4f}  "
           f"(상대편차 {sp['cv_rel_std'] * 100:.1f}%)")
@@ -72,7 +75,8 @@ def run_optimize(cfg, res, out_dir: str, seeds=None, iterations=None):
 
     # 최종 수치는 **참조 구현**(compute_ppfd)으로 다시 낸다. 최적화는 빠른 배열판을
     # 쓰므로, 둘이 갈라지면 여기서 숫자가 어긋나 바로 드러난다.
-    cfg_opt = replace(cfg, pots=best.pots, label=f"{cfg.label}_최적")
+    cfg_opt = replace(cfg, pots=best.pots, lights=best.lights,
+                      label=f"{cfg.label}_최적")
     res_opt = light.summarize(cfg_opt)
 
     def pct(new, old):
@@ -88,6 +92,15 @@ def run_optimize(cfg, res, out_dir: str, seeds=None, iterations=None):
     print(optimize.format_grid(optimize.layout_grid(cfg, cfg.pots)))
     print("\n[배치 — 식물 키(cm)]  최적")
     print(optimize.format_grid(optimize.layout_grid(cfg_opt, best.pots)))
+
+    if p.move_lights:
+        print("\n[조명]  시작 -> 최적")
+        print(optimize.light_table(cfg, best))
+        notes = optimize.light_notes(cfg, best, p)
+        if notes:
+            print("\n[읽기]")
+            for n in notes:
+                print(f"  - {n}")
 
     base = os.path.join(out_dir, cfg_opt.label)
     write_csv(cfg_opt, res_opt, base + ".csv")
