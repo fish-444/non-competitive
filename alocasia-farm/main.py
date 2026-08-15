@@ -2492,6 +2492,9 @@ async def update_plant(pid: str, name: str = Form(None), rot: float = Form(None)
     if rot is not None:
         p["rot"] = float(rot) % 360
     if note is not None:
+        # 공백만 보내면 메모를 지운다. 화면에서 메모를 비웠을 때 프런트가 빈
+        # 문자열 대신 공백 한 칸을 보내기 때문이다 — FastAPI 가 빈 폼 문자열을
+        # None 으로 바꿔서 '지움'과 '안 보냄'이 구분되지 않는다.
         p["note"] = note.strip()
 
     touched = False

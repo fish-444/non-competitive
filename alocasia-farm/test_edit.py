@@ -189,6 +189,18 @@ def test_note_can_be_cleared():
     _reset()
 
 
+def test_a_whitespace_note_clears_it_over_http():
+    """화면에서 메모를 비우면 프런트가 공백 한 칸을 보낸다.
+
+    FastAPI 가 빈 폼 문자열을 None 으로 바꿔서, 빈 문자열로는 '지움'과
+    '안 보냄'이 구분되지 않는다 — 실제로 HTTP 로는 메모가 안 지워졌다.
+    공백을 보내면 여기서 strip() 되어 빈 메모가 된다.
+    """
+    _plant(note="예전 메모")
+    assert _patch(note=" ")["note"] == ""
+    _reset()
+
+
 def test_note_is_trimmed():
     _plant()
     p = _patch(note="  앞뒤 공백  ")

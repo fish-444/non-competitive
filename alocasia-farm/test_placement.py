@@ -446,12 +446,17 @@ def test_the_pure_python_physics_matches_the_simulator():
     sim = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "light-sim")
     if not os.path.isdir(sim):
         return                                  # 시뮬레이터가 없는 설치본에서는 건너뛴다
+    # sys.path 는 반드시 되돌린다. light-sim 에도 main.py 가 있어서, 앞에 끼운 채로
+    # 두면 이 뒤에 도는 테스트의 `import main` 이 그쪽으로 가 버린다(실제로 겪었다).
+    saved = list(sys.path)
     sys.path.insert(0, sim)
     try:
         from geometry import Light, Pot
         from light import ppfd_at
     except ImportError:
         return                                  # numpy 가 없으면 건너뛴다
+    finally:
+        sys.path[:] = saved
 
     rng = random.Random(11)
     for _ in range(30):

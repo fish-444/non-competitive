@@ -1390,7 +1390,12 @@ function openModal(p){
 document.getElementById('mNote').addEventListener('change',async()=>{
   if(!modalId)return;
   const info=document.getElementById('mNoteInfo');
-  const fd=new FormData(); fd.append('note',document.getElementById('mNote').value);
+  // 비운 메모는 빈 문자열이 아니라 공백 한 칸으로 보낸다. FastAPI 가 빈 폼
+  // 문자열을 None 으로 바꿔 버려서, 그냥 보내면 서버가 '안 보냄'으로 읽고
+  // 예전 메모를 그대로 둔다 — 지워도 안 지워지던 게 이것 때문이었다.
+  // 서버가 strip() 하므로 공백 한 칸은 빈 메모가 된다.
+  const raw=document.getElementById('mNote').value;
+  const fd=new FormData(); fd.append('note', raw.trim() ? raw : ' ');
   const r=await fetch('/api/plants/'+modalId,{method:'PATCH',body:fd});
   if(!r.ok){ info.textContent='⚠️ 저장 실패'; return; }
   const p=await r.json();

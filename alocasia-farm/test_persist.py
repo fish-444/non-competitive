@@ -14,16 +14,35 @@ import sys
 import tempfile
 
 DB = os.path.join(tempfile.mkdtemp(), "test_farm.db")
-os.environ["FARM_DB"] = DB
-
-import main
 
 
 def _restart():
-    """서버 재시작 흉내 — 모듈을 새로 읽어 저장된 상태를 불러온다."""
-    for mod in [m for m in sys.modules if m == "main"]:
-        del sys.modules[mod]
-    return importlib.import_module("main")
+    """서버 재시작 흉내 — 모듈을 새로 읽어 저장된 상태를 불러온다.
+
+    main.FARM_DB 는 **모듈을 읽을 때 한 번만** 정해진다(main.py 의 os.environ.get).
+    그래서 다른 테스트 파일이 main 을 먼저 임포트해 두면 평범한 `import main` 은
+    이미 있는 모듈을 그대로 돌려주고, 이 파일이 잡은 임시 DB 는 무시된다 —
+    저장이 엉뚱한 데로 가서 되불러오면 빈 상태가 나온다. 파일 하나만 돌리면
+    통과하고 전체를 돌리면 깨지던 게 이 때문이었다. 그래서 매번 지우고 새로 읽는다.
+
+    읽고 나면 환경변수와 sys.modules 를 원래대로 되돌린다. 안 그러면 이 다음에
+    임포트되는 테스트 파일이 이 임시 DB 를 물어, 저장을 안 해야 할 테스트가
+    파일을 쓰고 photos/ 까지 만들어 버린다.
+    """
+    before = os.environ.get("FARM_DB")
+    os.environ["FARM_DB"] = DB
+    sys.modules.pop("main", None)
+    try:
+        return importlib.import_module("main")
+    finally:
+        sys.modules.pop("main", None)
+        if before is None:
+            os.environ.pop("FARM_DB", None)
+        else:
+            os.environ["FARM_DB"] = before
+
+
+main = _restart()
 
 
 def _clear():
