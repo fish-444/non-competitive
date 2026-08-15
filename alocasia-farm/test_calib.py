@@ -19,7 +19,8 @@ from fastapi import HTTPException                    # noqa: E402
 
 import main                                          # noqa: E402
 
-main.PHOTO_DIR = ""
+# 사진 보관함은 끈다 (main.get_photo_dir() 이 부를 때마다 환경변수를 읽는다)
+os.environ["PHOTO_DIR"] = ""
 
 
 def _reset():

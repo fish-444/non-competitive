@@ -10,6 +10,8 @@ import io
 import os
 import tempfile
 
+import pytest
+
 os.environ["FARM_DB"] = ""
 _TMP = tempfile.mkdtemp()
 os.environ["PHOTO_DIR"] = _TMP
@@ -19,7 +21,17 @@ from fastapi import HTTPException                    # noqa: E402
 
 import main                                          # noqa: E402
 
-main.PHOTO_DIR = _TMP
+
+@pytest.fixture(autouse=True)
+def _use_the_temp_photo_dir():
+    """이 파일의 테스트가 도는 동안만 임시 보관함을 쓴다.
+
+    conftest 가 매 테스트 앞에서 PHOTO_DIR 을 "" 로 되돌린다 — 보관을 실제로
+    확인하는 이 파일은 여기서 다시 잡는다. main.get_photo_dir() 이 부를 때마다
+    읽으므로 환경변수만 세우면 된다.
+    """
+    os.environ["PHOTO_DIR"] = _TMP
+    yield
 
 
 def _jpeg(w=800, h=600):
@@ -53,12 +65,15 @@ def test_two_photos_never_collide():
 
 def test_turning_the_archive_off_keeps_working():
     """PHOTO_DIR 를 비우면 안 남기되, 분석은 그대로 돌아야 한다."""
-    old = main.PHOTO_DIR
-    main.PHOTO_DIR = ""
+    old = os.environ.get("PHOTO_DIR")
+    os.environ["PHOTO_DIR"] = ""
     try:
         assert main.archive_photo(_jpeg(), "scan") == ""
     finally:
-        main.PHOTO_DIR = old
+        if old is None:
+            os.environ.pop("PHOTO_DIR", None)
+        else:
+            os.environ["PHOTO_DIR"] = old
 
 
 def test_an_empty_upload_is_not_archived():

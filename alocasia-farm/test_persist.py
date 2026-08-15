@@ -13,36 +13,44 @@ import sqlite3
 import sys
 import tempfile
 
+import pytest
+
 DB = os.path.join(tempfile.mkdtemp(), "test_farm.db")
+
+
+@pytest.fixture(autouse=True)
+def _use_the_temp_db():
+    """이 파일의 테스트가 도는 동안만 임시 DB 를 쓴다.
+
+    conftest 가 매 테스트 앞에서 FARM_DB 를 "" 로 되돌리므로, 저장을 실제로
+    확인하는 이 파일은 여기서 다시 잡아야 한다. 모듈 픽스처가 conftest 것보다
+    나중에 돌아 이긴다.
+    """
+    os.environ["FARM_DB"] = DB
+    yield
+    # 어지른 건 치우고 나간다. 이 파일은 저장을 확인하려고 PLANTS/POTS 에 값을
+    # 넣는데 _clear() 는 테스트 **시작할 때**만 부르므로, 마지막에 넣은 값이 그대로
+    # 남는다. 이 딕셔너리들은 모든 테스트 파일이 같이 쓰는 전역이라 남겨 두면
+    # 뒤에 도는 파일이 영향을 받는다 — 실제로 test_grouping 이 '화분 자리가 아직
+    # 없다'를 전제로 하는데 여기서 남긴 POTS 2개 때문에 깨졌다(순서가 섞일 때만).
+    for mod in {id(main): main, id(sys.modules.get("main")): sys.modules.get("main")}.values():
+        if mod is not None:
+            mod.PLANTS.clear(); mod.POTS.clear()
+            mod.LEAVES.clear(); mod.LEAF_FIXES.clear()
 
 
 def _restart():
     """서버 재시작 흉내 — 모듈을 새로 읽어 저장된 상태를 불러온다.
 
-    main.FARM_DB 는 **모듈을 읽을 때 한 번만** 정해진다(main.py 의 os.environ.get).
-    그래서 다른 테스트 파일이 main 을 먼저 임포트해 두면 평범한 `import main` 은
-    이미 있는 모듈을 그대로 돌려주고, 이 파일이 잡은 임시 DB 는 무시된다 —
-    저장이 엉뚱한 데로 가서 되불러오면 빈 상태가 나온다. 파일 하나만 돌리면
-    통과하고 전체를 돌리면 깨지던 게 이 때문이었다. 그래서 매번 지우고 새로 읽는다.
-
-    읽고 나면 환경변수와 sys.modules 를 원래대로 되돌린다. 안 그러면 이 다음에
-    임포트되는 테스트 파일이 이 임시 DB 를 물어, 저장을 안 해야 할 테스트가
-    파일을 쓰고 photos/ 까지 만들어 버린다.
+    main 의 전역(PLANTS 등)을 비우고 load_state() 를 다시 태우는 게 목적이다.
+    저장 경로는 main.get_db_path() 가 부를 때마다 읽으므로 여기서 손댈 게 없다.
     """
-    before = os.environ.get("FARM_DB")
-    os.environ["FARM_DB"] = DB
     sys.modules.pop("main", None)
-    try:
-        return importlib.import_module("main")
-    finally:
-        sys.modules.pop("main", None)
-        if before is None:
-            os.environ.pop("FARM_DB", None)
-        else:
-            os.environ["FARM_DB"] = before
+    return importlib.import_module("main")
 
 
-main = _restart()
+os.environ["FARM_DB"] = DB          # 아래 import 때 load_state() 가 이 DB 를 보게
+import main                                          # noqa: E402
 
 
 def _clear():
@@ -145,12 +153,16 @@ def test_corrupt_db_does_not_crash_startup():
 
 def test_saving_is_off_when_no_path():
     """FARM_DB='' 면 파일을 만들지 않는다."""
-    real, main.FARM_DB = main.FARM_DB, ""
+    real = os.environ.get("FARM_DB")
+    os.environ["FARM_DB"] = ""
     try:
         main.PLANTS["tmp"] = {"id": "tmp"}
         main.save_state()                    # 아무 일도 없어야 한다
     finally:
-        main.FARM_DB = real
+        if real is None:
+            os.environ.pop("FARM_DB", None)
+        else:
+            os.environ["FARM_DB"] = real
         main.PLANTS.pop("tmp", None)
         main.save_state()
 

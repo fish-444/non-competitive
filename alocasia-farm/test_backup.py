@@ -17,7 +17,9 @@ from fastapi import HTTPException                    # noqa: E402
 
 import main                                          # noqa: E402
 
-main.PHOTO_DIR = ""
+# 사진 보관함은 끈다. main 이 부를 때마다 환경변수를 읽으므로 여기서 정하면 된다
+# (모듈 속성을 덮어쓰던 방식은 get_photo_dir() 로 바뀌면서 더는 안 먹는다).
+os.environ["PHOTO_DIR"] = ""
 
 
 class _Upload:

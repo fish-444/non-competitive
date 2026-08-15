@@ -255,28 +255,40 @@ SLOTS = [{"label": f"{r}{c + 1}",
 # --------------------------------------------------------------------------- 저장
 # 식물·화분 자리를 파일에 남긴다. 안 그러면 서버를 끌 때마다 손으로 고친 값과
 # 새 잎 기록이 통째로 날아간다. FARM_DB="" 로 두면 저장하지 않는다(테스트용).
-FARM_DB = os.environ.get("FARM_DB", "farm.db")
+#
+# 모듈 최상단에서 한 번 읽어 전역에 박아 두면 안 된다. 파이썬은 같은 모듈을 두 번
+# 임포트해도 처음 것을 그대로 돌려주므로, 나중에 환경변수를 바꿔도 이미 박힌 값이
+# 그대로 살아남는다. 테스트가 파일마다 다른 FARM_DB 를 잡는데 먼저 임포트된
+# 파일의 값으로 고정돼, 파일 하나만 돌리면 통과하고 전체를 돌리면 깨졌다.
+# 그래서 **부를 때마다** 읽는다.
+def get_db_path() -> str:
+    """저장할 SQLite 파일 경로. 빈 문자열이면 저장하지 않는다."""
+    return os.environ.get("FARM_DB", "farm.db")
 
-# 분석한 원본 사진을 남겨 둘 곳. "" 로 두면 안 남긴다.
-# 지금까지는 박스를 그린 520px 썸네일만 남기고 원본은 버렸다. 그래서
-#   · 모델이 좋아져도 옛 사진을 다시 분석할 수 없고
-#   · 재학습에 쓸 자료가 안 모이고
-#   · "왜 이렇게 나왔지" 를 되짚을 수 없었다(썸네일은 이미 판정이 반영된 결과물).
-# FARM_DB 를 비운 건 "이 실행은 아무것도 남기지 않는다"는 뜻이다(테스트). 그때는
-# 사진도 안 남긴다 — 안 그러면 테스트를 돌릴 때마다 photos/ 가 쌓인다.
-PHOTO_DIR = os.environ.get("PHOTO_DIR", "photos" if FARM_DB else "")
+
+def get_photo_dir() -> str:
+    """분석한 원본 사진을 남겨 둘 곳. "" 로 두면 안 남긴다.
+
+    지금까지는 박스를 그린 520px 썸네일만 남기고 원본은 버렸다. 그래서
+      · 모델이 좋아져도 옛 사진을 다시 분석할 수 없고
+      · 재학습에 쓸 자료가 안 모이고
+      · "왜 이렇게 나왔지" 를 되짚을 수 없었다(썸네일은 이미 판정이 반영된 결과물).
+    FARM_DB 를 비운 건 "이 실행은 아무것도 남기지 않는다"는 뜻이다(테스트). 그때는
+    사진도 안 남긴다 — 안 그러면 테스트를 돌릴 때마다 photos/ 가 쌓인다.
+    """
+    return os.environ.get("PHOTO_DIR", "photos" if get_db_path() else "")
 
 
 def _db():
     import sqlite3
-    con = sqlite3.connect(FARM_DB)
+    con = sqlite3.connect(get_db_path())
     con.execute("CREATE TABLE IF NOT EXISTS state(key TEXT PRIMARY KEY, value TEXT)")
     return con
 
 
 def save_state() -> None:
     """지금 상태를 저장. 바뀔 때마다 부른다 (개체 수가 적어 통째로 써도 싸다)."""
-    if not FARM_DB:
+    if not get_db_path():
         return
     import json
     try:
@@ -295,7 +307,8 @@ def save_state() -> None:
 
 def load_state() -> None:
     """서버 시작 때 이전 상태를 되살린다."""
-    if not FARM_DB or not os.path.exists(FARM_DB):
+    db = get_db_path()
+    if not db or not os.path.exists(db):
         return
     import json
     try:
@@ -310,7 +323,7 @@ def load_state() -> None:
         CALIB.update(json.loads(rows.get("calib", "{}")))
         if PLANTS or POTS:
             print(f"[저장소] 식물 {len(PLANTS)}개 · 화분자리 {len(POTS)}개 · "
-                  f"잎 {len(LEAVES)}장 불러옴 ({FARM_DB})")
+                  f"잎 {len(LEAVES)}장 불러옴 ({db})")
     except Exception as e:
         print(f"[경고] 불러오기 실패({e}) — 빈 상태로 시작합니다")
 
@@ -1348,10 +1361,11 @@ def archive_photo(raw: bytes, tag: str = "scan") -> str:
     금방 무거워지고, 파일이면 탐색기로 열어 보거나 통째로 백업하기도 쉽다.
     달 폴더로 나눠 한 폴더에 수천 장이 쌓이지 않게 한다.
     """
-    if not PHOTO_DIR or not raw:
+    photo_dir = get_photo_dir()
+    if not photo_dir or not raw:
         return ""
     rel = os.path.join(time.strftime("%Y-%m"), f"{tag}_{uuid.uuid4().hex[:8]}.jpg")
-    dest = os.path.join(PHOTO_DIR, rel)
+    dest = os.path.join(photo_dir, rel)
     try:
         os.makedirs(os.path.dirname(dest), exist_ok=True)
         with open(dest, "wb") as f:
@@ -1391,9 +1405,10 @@ def _add_scan_photo(rel: str, scan_id: str, n_plants: int) -> None:
 
 def read_photo(rel: str) -> bytes:
     """보관한 원본을 읽는다. PHOTO_DIR 바깥은 절대 못 읽게 막는다."""
-    if not rel or not PHOTO_DIR:
+    photo_dir = get_photo_dir()
+    if not rel or not photo_dir:
         raise HTTPException(404, "보관된 사진이 없어요.")
-    root = os.path.abspath(PHOTO_DIR)
+    root = os.path.abspath(photo_dir)
     path = os.path.abspath(os.path.join(root, rel))
     # ../ 로 빠져나가 다른 파일을 읽으려는 요청을 막는다
     if os.path.commonpath([root, path]) != root or not os.path.isfile(path):
