@@ -1,0 +1,127 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{NAME}}</title>
+<style>
+  :root{
+    --bg:#f6f8f7; --card:#fff; --ink:#18211d; --dim:#5d6d65;
+    --line:#dee6e2; --accent:#2c7a5b; --bad:#a33a32;
+  }
+  @media (prefers-color-scheme:dark){
+    :root{--bg:#101614; --card:#18211d; --ink:#e6efe9; --dim:#93a69c;
+          --line:#26332d; --accent:#7fd0a8; --bad:#e38078}
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.6 system-ui,
+       -apple-system,"Apple SD Gothic Neo","Malgun Gothic",sans-serif}
+  .wrap{max-width:720px;margin:0 auto;padding:40px 20px 80px;
+        display:flex;flex-direction:column;gap:24px}
+  h1{margin:0;font-size:26px;letter-spacing:-.02em}
+  .sum{display:flex;gap:10px;flex-wrap:wrap}
+  .pill{background:var(--card);border:1px solid var(--line);border-radius:999px;
+        padding:5px 13px;font-size:13px;color:var(--dim)}
+  .pill b{color:var(--ink)}
+  form{display:flex;gap:8px;flex-wrap:wrap}
+  input,button{font:inherit;border-radius:8px;border:1px solid var(--line);
+               padding:9px 12px;background:var(--card);color:var(--ink)}
+  input{flex:1;min-width:160px}
+  button{cursor:pointer;background:var(--accent);color:#fff;border-color:transparent}
+  button.ghost{background:transparent;color:var(--dim)}
+  ul{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px}
+  li{background:var(--card);border:1px solid var(--line);border-radius:9px;
+     padding:11px 14px;display:flex;align-items:center;gap:11px}
+  li.done .name{text-decoration:line-through;color:var(--dim)}
+  .name{flex:1}
+  .tag{font-size:12px;color:var(--dim);border:1px solid var(--line);
+       border-radius:5px;padding:1px 6px}
+  .msg{color:var(--bad);font-size:14px;min-height:20px}
+  .empty{color:var(--dim);font-size:14px}
+</style>
+
+<div class="wrap">
+  <h1>{{NAME}}</h1>
+  <div class="sum" id="sum"></div>
+
+  <form id="add">
+    <input id="name" placeholder="할 일" required>
+    <input id="tags" placeholder="태그 (쉼표로 구분)">
+    <button>추가</button>
+  </form>
+  <div class="msg" id="msg"></div>
+
+  <ul id="list"></ul>
+</div>
+
+<script>
+// 화면은 서버가 준 것만 그린다. 개수 같은 값을 여기서 다시 세면 API 와 화면이
+// 서로 다른 숫자를 말하게 된다 — 세는 규칙은 backend/logic.py 한 곳에만 둔다.
+const $ = (id) => document.getElementById(id);
+
+async function api(path, opts) {
+  const r = await fetch(path, opts);
+  if (!r.ok) {
+    const e = await r.json().catch(() => ({}));
+    throw new Error(e.detail || "요청 실패");
+  }
+  return r.json();
+}
+
+function draw(data) {
+  const s = data.summary;
+  $("sum").innerHTML =
+    `<span class="pill">전체 <b>${s.total}</b></span>` +
+    `<span class="pill">남음 <b>${s.left}</b></span>` +
+    `<span class="pill">완료 <b>${s.done}</b></span>` +
+    s.tags.map(t => `<span class="pill">#${t}</span>`).join("");
+
+  $("list").innerHTML = data.items.length ? "" :
+    `<li class="empty">아직 없습니다. 위에서 추가하세요.</li>`;
+  for (const it of data.items) {
+    const li = document.createElement("li");
+    li.className = it.done ? "done" : "";
+    li.innerHTML =
+      `<input type="checkbox" ${it.done ? "checked" : ""} data-id="${it.id}">` +
+      `<span class="name"></span>` +
+      it.tags.map(t => `<span class="tag">${t}</span>`).join("") +
+      `<button class="ghost" data-del="${it.id}">삭제</button>`;
+    // 이름은 textContent 로 넣는다 — innerHTML 로 넣으면 사용자가 친 글자가
+    // 태그로 해석된다.
+    li.querySelector(".name").textContent = it.name;
+    $("list").appendChild(li);
+  }
+}
+
+async function refresh() { draw(await api("/api/items")); }
+
+$("add").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  $("msg").textContent = "";
+  const fd = new FormData();
+  fd.append("name", $("name").value);
+  fd.append("tags", $("tags").value);
+  try {
+    await api("/api/items", { method: "POST", body: fd });
+    $("name").value = ""; $("tags").value = "";
+    await refresh();
+  } catch (e) { $("msg").textContent = "⚠️ " + e.message; }
+});
+
+$("list").addEventListener("click", async (ev) => {
+  const del = ev.target.dataset.del;
+  if (del) {
+    await api("/api/items/" + del, { method: "DELETE" });
+    return refresh();
+  }
+});
+
+$("list").addEventListener("change", async (ev) => {
+  const id = ev.target.dataset.id;
+  if (!id) return;
+  const fd = new FormData();
+  fd.append("done", ev.target.checked ? "true" : "false");
+  await api("/api/items/" + id, { method: "PATCH", body: fd });
+  refresh();
+});
+
+refresh();
+</script>
